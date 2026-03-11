@@ -46,6 +46,11 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/admin/etudiants").hasAnyRole("ADMIN", "ENSEIGNANT")
                 .requestMatchers(HttpMethod.GET, "/api/admin/etudiants/**").hasAnyRole("ADMIN", "ENSEIGNANT")
 
+                // Enseignant peut lire et gérer les absences
+                .requestMatchers(HttpMethod.GET, "/api/admin/absences").hasAnyRole("ADMIN", "ENSEIGNANT")
+                .requestMatchers(HttpMethod.GET, "/api/admin/absences/**").hasAnyRole("ADMIN", "ENSEIGNANT")
+                .requestMatchers(HttpMethod.PUT, "/api/admin/absences/**").hasAnyRole("ADMIN", "ENSEIGNANT")
+                .requestMatchers(HttpMethod.DELETE, "/api/admin/absences/**").hasAnyRole("ADMIN", "ENSEIGNANT")
                 // ✅ Enseignant peut lire matières
                 .requestMatchers(HttpMethod.GET, "/api/admin/matieres").hasAnyRole("ADMIN", "ENSEIGNANT")
                 .requestMatchers(HttpMethod.GET, "/api/admin/matieres/**").hasAnyRole("ADMIN", "ENSEIGNANT")
