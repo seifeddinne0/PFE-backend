@@ -6,7 +6,8 @@ import java.time.LocalDate;
 
 @Data
 public class EtudiantRequest {
-
+    @NotBlank 
+    private String password;
     @NotBlank(message = "Le nom est obligatoire")
     private String nom;
 

@@ -7,6 +7,7 @@ import java.time.LocalDate;
 
 @Data
 public class EnseignantRequest {
+    @NotBlank private String password;
     @NotBlank private String nom;
     @NotBlank private String prenom;
     @Email @NotBlank private String email;

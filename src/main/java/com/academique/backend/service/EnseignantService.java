@@ -3,19 +3,23 @@ package com.academique.backend.service;
 import com.academique.backend.dto.request.EnseignantRequest;
 import com.academique.backend.dto.response.EnseignantResponse;
 import com.academique.backend.entity.Enseignant;
+import com.academique.backend.entity.Role;
 import com.academique.backend.entity.User;
 import com.academique.backend.exception.ResourceNotFoundException;
 import com.academique.backend.repository.EnseignantRepository;
+import com.academique.backend.repository.RoleRepository;
 import com.academique.backend.repository.UserRepository;
 import com.itextpdf.text.*;
 import com.itextpdf.text.pdf.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.time.Year;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -23,11 +27,27 @@ public class EnseignantService {
 
     private final EnseignantRepository enseignantRepository;
     private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public EnseignantResponse create(EnseignantRequest request) {
         if (enseignantRepository.existsByEmail(request.getEmail())) {
             throw new RuntimeException("Email déjà utilisé");
         }
+
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setNom(request.getNom());
+        user.setPrenom(request.getPrenom());
+        user.setActif(true);
+
+        Role role = roleRepository.findByName(Role.RoleName.ROLE_ENSEIGNANT)
+            .orElseThrow(() -> new ResourceNotFoundException("Rôle ENSEIGNANT non trouvé"));
+        user.setRoles(Set.of(role));
+
+        User savedUser = userRepository.save(user);
+
         Enseignant enseignant = new Enseignant();
         enseignant.setNom(request.getNom());
         enseignant.setPrenom(request.getPrenom());
@@ -38,12 +58,8 @@ public class EnseignantService {
         enseignant.setSpecialite(request.getSpecialite());
         enseignant.setGrade(request.getGrade());
         enseignant.setMatricule(generateMatricule());
+        enseignant.setUser(savedUser);
 
-        if (request.getUserId() != null) {
-            User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new ResourceNotFoundException("User non trouvé"));
-            enseignant.setUser(user);
-        }
         return toResponse(enseignantRepository.save(enseignant));
     }
 
@@ -64,6 +80,7 @@ public class EnseignantService {
     public EnseignantResponse update(Long id, EnseignantRequest request) {
         Enseignant enseignant = enseignantRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+
         enseignant.setNom(request.getNom());
         enseignant.setPrenom(request.getPrenom());
         enseignant.setEmail(request.getEmail());
@@ -72,6 +89,18 @@ public class EnseignantService {
         enseignant.setAdresse(request.getAdresse());
         enseignant.setSpecialite(request.getSpecialite());
         enseignant.setGrade(request.getGrade());
+
+        if (enseignant.getUser() != null) {
+            User user = enseignant.getUser();
+            user.setNom(request.getNom());
+            user.setPrenom(request.getPrenom());
+            user.setEmail(request.getEmail());
+            if (request.getPassword() != null && !request.getPassword().isEmpty()) {
+                user.setPassword(passwordEncoder.encode(request.getPassword()));
+            }
+            userRepository.save(user);
+        }
+
         return toResponse(enseignantRepository.save(enseignant));
     }
 
@@ -141,6 +170,7 @@ public class EnseignantService {
             document.add(table);
             document.close();
             return out.toByteArray();
+
         } catch (Exception e) {
             throw new RuntimeException("Erreur génération PDF", e);
         }
