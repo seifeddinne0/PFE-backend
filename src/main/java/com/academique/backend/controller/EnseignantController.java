@@ -31,7 +31,7 @@ public class EnseignantController {
     }
 
     @GetMapping("/admin/enseignants")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT', 'ETUDIANT')")
     public ResponseEntity<Page<EnseignantResponse>> getAll(
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "10") int size,
@@ -62,7 +62,7 @@ public class EnseignantController {
     }
 
     @GetMapping("/admin/enseignants/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT', 'ETUDIANT')")
     public ResponseEntity<EnseignantResponse> getById(
             @PathVariable(name = "id") Long id) {
         return ResponseEntity.ok(enseignantService.getById(id));

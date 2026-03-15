@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.Optional;
 
 public interface EtudiantRepository extends JpaRepository<Etudiant, Long> {
-
+    long countByStatut(Etudiant.Statut statut);
     Optional<Etudiant> findByEmail(String email);
 
     Optional<Etudiant> findByMatricule(String matricule);

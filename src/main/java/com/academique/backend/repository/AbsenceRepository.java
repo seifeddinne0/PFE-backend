@@ -9,13 +9,15 @@ import org.springframework.data.repository.query.Param;
 import java.util.List;
 
 public interface AbsenceRepository extends JpaRepository<Absence, Long> {
-
+    long countByAlerte(Boolean alerte);
+    long countByStatut(Absence.Statut statut);
     List<Absence> findByEtudiantId(Long etudiantId);
     Page<Absence> findByEtudiantId(Long etudiantId, Pageable pageable);
     Page<Absence> findByStatut(Absence.Statut statut, Pageable pageable);
     List<Absence> findByEtudiantIdAndStatut(Long etudiantId, Absence.Statut statut);
     long countByEtudiantId(Long etudiantId);
     long countByEtudiantIdAndStatut(Long etudiantId, Absence.Statut statut);
+    long countByEnseignantId(Long enseignantId);
 
     @Query("SELECT a FROM Absence a WHERE a.etudiant.id = :etudiantId " +
            "ORDER BY a.dateAbsence DESC")

@@ -41,10 +41,19 @@ public class SecurityConfig {
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
-
-                // ✅ Enseignant peut lire étudiants
+                
+                .requestMatchers("/uploads/**").permitAll()
+                .requestMatchers("/api/profile/**").authenticated()
+                // Documents
+                .requestMatchers(HttpMethod.GET, "/api/admin/documents").hasAnyRole("ADMIN")
+                .requestMatchers(HttpMethod.GET, "/api/admin/documents/**").hasAnyRole("ADMIN")
+                .requestMatchers(HttpMethod.PATCH, "/api/admin/documents/**").hasAnyRole("ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/admin/documents/**").hasAnyRole("ADMIN")
+                // ✅ Enseignant et Étudiant peuvent lire les enseignants
                 .requestMatchers(HttpMethod.GET, "/api/admin/etudiants").hasAnyRole("ADMIN", "ENSEIGNANT")
                 .requestMatchers(HttpMethod.GET, "/api/admin/etudiants/**").hasAnyRole("ADMIN", "ENSEIGNANT")
+                .requestMatchers(HttpMethod.GET, "/api/admin/enseignants").hasAnyRole("ADMIN", "ENSEIGNANT", "ETUDIANT")
+                .requestMatchers(HttpMethod.GET, "/api/admin/enseignants/**").hasAnyRole("ADMIN", "ENSEIGNANT", "ETUDIANT")
 
                 // Enseignant peut lire et gérer les absences
                 .requestMatchers(HttpMethod.GET, "/api/admin/absences").hasAnyRole("ADMIN", "ENSEIGNANT")

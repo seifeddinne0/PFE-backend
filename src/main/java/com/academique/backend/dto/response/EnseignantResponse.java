@@ -21,4 +21,5 @@ public class EnseignantResponse {
     private String statut;
     private LocalDateTime createdAt;
     private String userEmail;
+    private String photo;
 }

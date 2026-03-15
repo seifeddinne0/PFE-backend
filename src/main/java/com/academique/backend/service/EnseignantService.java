@@ -191,6 +191,7 @@ public class EnseignantService {
             .statut(e.getStatut().name())
             .createdAt(e.getCreatedAt())
             .userEmail(e.getUser() != null ? e.getUser().getEmail() : null)
+            .photo(e.getUser() != null ? e.getUser().getPhoto() : null)
             .build();
     }
 }

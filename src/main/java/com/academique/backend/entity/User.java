@@ -18,7 +18,8 @@ public class User {
 
     @Column(nullable = false)
     private String password;
-
+    private String telephone;
+    private String photo;
     private String nom;
     private String prenom;
 
