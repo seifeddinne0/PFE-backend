@@ -41,6 +41,7 @@ public class Facture {
     private String description;
     private LocalDate dateEcheance;
     private LocalDate datePaiement;
+    private String preuvePaiement;
 
     @Column(updatable = false)
     private LocalDateTime createdAt;

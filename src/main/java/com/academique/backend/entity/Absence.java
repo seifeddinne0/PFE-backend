@@ -51,4 +51,8 @@ public class Absence {
     @ManyToOne
     @JoinColumn(name = "enseignant_id")
     private Enseignant enseignant;
+
+    @ManyToOne
+    @JoinColumn(name = "seance_id")
+    private Seance seance;
 }

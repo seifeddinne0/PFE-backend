@@ -22,4 +22,7 @@ public interface AbsenceRepository extends JpaRepository<Absence, Long> {
     @Query("SELECT a FROM Absence a WHERE a.etudiant.id = :etudiantId " +
            "ORDER BY a.dateAbsence DESC")
     List<Absence> findByEtudiantIdOrderByDate(@Param("etudiantId") Long etudiantId);
+
+    List<Absence> findBySeanceIdAndDateAbsence(Long seanceId, java.time.LocalDate dateAbsence);
+    List<Absence> findBySeanceId(Long seanceId);
 }

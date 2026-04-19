@@ -12,4 +12,5 @@ public class MatiereResponse {
     private String description;
     private Double coefficient;
     private String semestre;
+    private Long enseignantId;
 }

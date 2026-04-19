@@ -35,6 +35,9 @@ public class Enseignant {
     private String specialite;
     private String grade;
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean canManageNotes = false;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Statut statut = Statut.ACTIF;

@@ -98,7 +98,7 @@ public class DemandeDocumentService {
         Enseignant enseignant = enseignantRepository.findByEmail(email)
             .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
         return demandeRepository.findByValidateursId(enseignant.getId())
-            .stream().map(this::toResponse).toList();
+            .stream().map(d -> toResponse(d, enseignant.getId())).toList();
     }
 
     // ─── ENSEIGNANT VALIDE ────────────────────────────────
@@ -537,6 +537,10 @@ public class DemandeDocumentService {
 
     // ─── MAPPER ───────────────────────────────────────────
     private DemandeDocumentResponse toResponse(DemandeDocument d) {
+        return toResponse(d, null);
+    }
+
+    private DemandeDocumentResponse toResponse(DemandeDocument d, Long enseignantId) {
         List<ValidationEnseignant> validations = validationRepository.findByDemandeId(d.getId());
 
         List<DemandeDocumentResponse.ValidateurInfo> validateursInfo = validations.stream()
@@ -555,10 +559,24 @@ public class DemandeDocumentService {
 
         boolean pretPourEnvoi = d.getStatut() == DemandeDocument.Statut.VALIDEE;
 
+        String monStatut = null;
+        if (enseignantId != null) {
+            monStatut = validations.stream()
+                .filter(v -> v.getEnseignant() != null && enseignantId.equals(v.getEnseignant().getId()))
+                .map(v -> switch (v.getStatut()) {
+                    case VALIDE -> "VALIDEE";
+                    case REJETE -> "REJETEE";
+                    case EN_ATTENTE -> "EN_ATTENTE";
+                })
+                .findFirst()
+                .orElse("EN_ATTENTE");
+        }
+
         return DemandeDocumentResponse.builder()
             .id(d.getId())
             .typeDocument(d.getTypeDocument().name())
             .statut(d.getStatut().name())
+            .monStatut(monStatut)
             .motif(d.getMotif())
             .commentaireAdmin(d.getCommentaireAdmin())
             .nomEntrepriseStage(d.getNomEntrepriseStage())

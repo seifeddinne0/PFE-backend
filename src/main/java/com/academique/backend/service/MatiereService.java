@@ -72,6 +72,7 @@ public class MatiereService {
             .description(m.getDescription())
             .coefficient(m.getCoefficient())
             .semestre(m.getSemestre().name())
+            .enseignantId(m.getEnseignant() != null ? m.getEnseignant().getId() : null)
             .build();
     }
 }

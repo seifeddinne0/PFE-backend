@@ -2,10 +2,9 @@ package com.academique.backend.service;
 
 import com.academique.backend.dto.request.EtudiantRequest;
 import com.academique.backend.dto.response.EtudiantResponse;
-import com.academique.backend.entity.Etudiant;
-import com.academique.backend.entity.Role;
-import com.academique.backend.entity.User;
+import com.academique.backend.entity.*;
 import com.academique.backend.exception.ResourceNotFoundException;
+import com.academique.backend.repository.ClasseRepository;
 import com.academique.backend.repository.EtudiantRepository;
 import com.academique.backend.repository.RoleRepository;
 import com.academique.backend.repository.UserRepository;
@@ -13,12 +12,15 @@ import com.itextpdf.text.*;
 import com.itextpdf.text.pdf.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.time.Year;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -28,6 +30,7 @@ public class EtudiantService {
     private final EtudiantRepository etudiantRepository;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final ClasseRepository classeRepository;
     private final PasswordEncoder passwordEncoder;
 
     // ─── CREATE ───────────────────────────────────────────
@@ -59,6 +62,14 @@ public class EtudiantService {
         etudiant.setMatricule(generateMatricule());
         etudiant.setUser(savedUser);
 
+        if (request.getClasseId() == null) {
+            throw new IllegalArgumentException("La classe est obligatoire");
+        }
+
+        Classe classe = classeRepository.findById(request.getClasseId())
+            .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
+        etudiant.setClasse(classe);
+
         return toResponse(etudiantRepository.save(etudiant));
     }
 
@@ -71,19 +82,22 @@ public class EtudiantService {
 
     // ─── READ ALL ──────────────────────────────────────────
     public Page<EtudiantResponse> getAll(Pageable pageable) {
-        return etudiantRepository.findAll(pageable).map(this::toResponse);
+        Pageable safePageable = Objects.requireNonNull(pageable, "pageable ne peut pas être null");
+        return etudiantRepository.findAll(safePageable).map(this::toResponse);
     }
 
     // ─── READ ONE ──────────────────────────────────────────
     public EtudiantResponse getById(Long id) {
-        Etudiant etudiant = etudiantRepository.findById(id)
+        Long safeId = Objects.requireNonNull(id, "id ne peut pas être null");
+        Etudiant etudiant = etudiantRepository.findById(safeId)
             .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
         return toResponse(etudiant);
     }
 
     // ─── UPDATE ───────────────────────────────────────────
     public EtudiantResponse update(Long id, EtudiantRequest request) {
-        Etudiant etudiant = etudiantRepository.findById(id)
+        Long safeId = Objects.requireNonNull(id, "id ne peut pas être null");
+        Etudiant etudiant = etudiantRepository.findById(safeId)
             .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
 
         etudiant.setNom(request.getNom());
@@ -92,6 +106,13 @@ public class EtudiantService {
         etudiant.setTelephone(request.getTelephone());
         etudiant.setDateNaissance(request.getDateNaissance());
         etudiant.setAdresse(request.getAdresse());
+
+        if (request.getClasseId() != null) {
+            Long classeId = Objects.requireNonNull(request.getClasseId(), "classeId ne peut pas être null");
+            Classe classe = classeRepository.findById(classeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
+            etudiant.setClasse(classe);
+        }
 
         if (etudiant.getUser() != null) {
             User user = etudiant.getUser();
@@ -107,17 +128,51 @@ public class EtudiantService {
         return toResponse(etudiantRepository.save(etudiant));
     }
 
+    public EtudiantResponse setNotesAccess(Long id, boolean enabled) {
+        Long safeId = Objects.requireNonNull(id, "id ne peut pas être null");
+        Etudiant etudiant = etudiantRepository.findById(safeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+
+        etudiant.setNotesAccessEnabled(enabled);
+        return toResponse(etudiantRepository.save(etudiant));
+    }
+
     // ─── DELETE ───────────────────────────────────────────
     public void delete(Long id) {
-        if (!etudiantRepository.existsById(id)) {
+        Long safeId = Objects.requireNonNull(id, "id ne peut pas être null");
+        if (!etudiantRepository.existsById(safeId)) {
             throw new ResourceNotFoundException("Étudiant non trouvé");
         }
-        etudiantRepository.deleteById(id);
+        etudiantRepository.deleteById(safeId);
     }
 
     // ─── SEARCH ───────────────────────────────────────────
     public Page<EtudiantResponse> search(String query, Pageable pageable) {
-        return etudiantRepository.search(query, pageable).map(this::toResponse);
+        Pageable safePageable = Objects.requireNonNull(pageable, "pageable ne peut pas être null");
+        String safeQuery = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+
+        if (safeQuery.isEmpty()) {
+            return etudiantRepository.findAll(safePageable).map(this::toResponse);
+        }
+
+        List<Etudiant> filtered = etudiantRepository.findAll().stream()
+            .filter(e -> containsIgnoreCase(e.getNom(), safeQuery)
+                || containsIgnoreCase(e.getPrenom(), safeQuery)
+                || containsIgnoreCase(e.getMatricule(), safeQuery)
+                || containsIgnoreCase(e.getEmail(), safeQuery))
+            .toList();
+
+        int start = (int) safePageable.getOffset();
+        if (start >= filtered.size()) {
+            return new PageImpl<>(List.of(), safePageable, filtered.size());
+        }
+
+        int end = Math.min(start + safePageable.getPageSize(), filtered.size());
+        List<EtudiantResponse> content = filtered.subList(start, end).stream()
+            .map(this::toResponse)
+            .toList();
+
+        return new PageImpl<>(content, safePageable, filtered.size());
     }
 
     // ─── MATRICULE AUTO ───────────────────────────────────
@@ -138,12 +193,19 @@ public class EtudiantService {
             .telephone(e.getTelephone())
             .dateNaissance(e.getDateNaissance())
             .adresse(e.getAdresse())
-            .statut(e.getStatut().name())
+                .statut(e.getStatut() != null ? e.getStatut().name() : null)
             .createdAt(e.getCreatedAt())
             .userEmail(e.getUser() != null ? e.getUser().getEmail() : null)
             .photo(e.getUser() != null ? e.getUser().getPhoto() : null)
+            .classeId(e.getClasse() != null ? e.getClasse().getId() : null)
+            .classeCode(e.getClasse() != null ? e.getClasse().getCode() : null)
+                .notesAccessEnabled(e.getNotesAccessEnabled())
             .build();
     }
+
+            private boolean containsIgnoreCase(String value, String query) {
+            return value != null && value.toLowerCase(Locale.ROOT).contains(query);
+            }
 
     // ─── EXPORT PDF ───────────────────────────────────────
     public byte[] exportPdf() {

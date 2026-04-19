@@ -1,6 +1,7 @@
 package com.academique.backend.service;
 
 import com.academique.backend.dto.request.FactureRequest;
+import com.academique.backend.dto.request.BatchFactureRequest;
 import com.academique.backend.dto.response.FactureResponse;
 import com.academique.backend.entity.Etudiant;
 import com.academique.backend.entity.Facture;
@@ -13,11 +14,19 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.Year;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -43,6 +52,40 @@ public class FactureService {
             facture.setTypeFacture(Facture.TypeFacture.valueOf(request.getTypeFacture()));
 
         return toResponse(factureRepository.save(facture));
+    }
+
+    public Map<String, Object> createBatch(BatchFactureRequest request) {
+        List<Long> classeIds = request.getClasseIds();
+        List<Etudiant> etudiants = etudiantRepository.findByClasseIdIn(classeIds);
+
+        if (etudiants.isEmpty()) {
+            throw new ResourceNotFoundException("Aucun étudiant trouvé pour les classes sélectionnées");
+        }
+
+        Facture.TypeFacture type = parseTypeFacture(request.getTypeFacture());
+        int createdCount = 0;
+
+        for (Etudiant etudiant : etudiants) {
+            Facture facture = new Facture();
+            facture.setNumero(generateNumero());
+            facture.setMontant(request.getMontant());
+            facture.setDescription(request.getDescription());
+            facture.setDateEcheance(request.getDateEcheance());
+            facture.setEtudiant(etudiant);
+            facture.setStatut(Facture.Statut.NON_PAYEE);
+            facture.setTypeFacture(type);
+            factureRepository.save(facture);
+            createdCount++;
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("classesCount", classeIds.size());
+        result.put("studentsCount", etudiants.size());
+        result.put("createdCount", createdCount);
+        result.put("montant", request.getMontant());
+        result.put("typeFacture", type.name());
+        result.put("message", "Factures créées avec succès pour le groupe sélectionné");
+        return result;
     }
 
     // ─── READ ALL ──────────────────────────────────────────
@@ -100,6 +143,62 @@ public class FactureService {
             .orElseThrow(() -> new ResourceNotFoundException("Facture non trouvée"));
         facture.setStatut(Facture.Statut.PAYEE);
         facture.setDatePaiement(LocalDate.now());
+        return toResponse(factureRepository.save(facture));
+    }
+
+    public FactureResponse confirmerPaiementEtudiant(
+        Long factureId,
+        String etudiantEmail,
+        LocalDate datePaiement,
+        MultipartFile image
+    ) {
+        Etudiant etudiant = etudiantRepository.findByEmail(etudiantEmail)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+
+        Facture facture = factureRepository.findById(factureId)
+            .orElseThrow(() -> new ResourceNotFoundException("Facture non trouvée"));
+
+        if (!facture.getEtudiant().getId().equals(etudiant.getId())) {
+            throw new IllegalArgumentException("Vous ne pouvez confirmer que vos propres factures");
+        }
+
+        if (facture.getStatut() == Facture.Statut.ANNULEE) {
+            throw new IllegalArgumentException("Cette facture est annulée");
+        }
+
+        if (facture.getStatut() == Facture.Statut.PAYEE) {
+            throw new IllegalArgumentException("Cette facture est déjà marquée comme payée");
+        }
+
+        if (datePaiement == null) {
+            throw new IllegalArgumentException("La date de paiement est obligatoire");
+        }
+
+        if (image == null || image.isEmpty()) {
+            throw new IllegalArgumentException("La photo du reçu est obligatoire");
+        }
+
+        String contentType = image.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Le fichier doit être une image");
+        }
+
+        String extension = extractExtension(image.getOriginalFilename());
+        String fileName = "receipt_" + factureId + "_" + UUID.randomUUID() + extension;
+        Path uploadDir = Path.of("uploads", "receipts");
+        Path targetPath = uploadDir.resolve(fileName);
+
+        try {
+            Files.createDirectories(uploadDir);
+            Files.copy(image.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new RuntimeException("Erreur lors de l'upload du reçu", e);
+        }
+
+        facture.setPreuvePaiement("/uploads/receipts/" + fileName);
+        facture.setDatePaiement(datePaiement);
+        facture.setStatut(Facture.Statut.EN_ATTENTE);
+
         return toResponse(factureRepository.save(facture));
     }
 
@@ -163,7 +262,7 @@ public class FactureService {
             table.setWidths(new float[]{2f, 2f, 2f, 2f, 2f, 2f});
 
             Font headerFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.WHITE);
-            String[] headers = {"Numéro", "Type", "Montant", "Échéance", "Paiement", "Statut"};
+            String[] headers = {"Numéro", "Type", "Montant", "Paiement", "Confirmation", "Statut"};
             for (String h : headers) {
                 PdfPCell cell = new PdfPCell(new Phrase(h, headerFont));
                 cell.setBackgroundColor(new BaseColor(4, 41, 84));
@@ -191,8 +290,8 @@ public class FactureService {
                     f.getNumero(),
                     f.getTypeFacture() != null ? f.getTypeFacture().name() : "-",
                     String.format("%.2f DT", f.getMontant()),
-                    f.getDateEcheance() != null ? f.getDateEcheance().toString() : "-",
                     f.getDatePaiement() != null ? f.getDatePaiement().toString() : "-",
+                    f.getPreuvePaiement() != null && !f.getPreuvePaiement().isBlank() ? "OUI" : "NON",
                     f.getStatut().name()
                 };
 
@@ -232,6 +331,30 @@ public class FactureService {
         return String.format("FAC-%d-%04d", year, count);
     }
 
+    private Facture.TypeFacture parseTypeFacture(String rawType) {
+        if (rawType == null || rawType.isBlank()) {
+            return Facture.TypeFacture.SCOLARITE;
+        }
+        return Facture.TypeFacture.valueOf(rawType.trim().toUpperCase(Locale.ROOT));
+    }
+
+    private String extractExtension(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return ".jpg";
+        }
+
+        int index = fileName.lastIndexOf('.');
+        if (index == -1 || index == fileName.length() - 1) {
+            return ".jpg";
+        }
+
+        String extension = fileName.substring(index).toLowerCase(Locale.ROOT);
+        if (extension.equals(".png") || extension.equals(".jpg") || extension.equals(".jpeg") || extension.equals(".webp")) {
+            return extension;
+        }
+        return ".jpg";
+    }
+
     // ─── MAPPER ───────────────────────────────────────────
     private FactureResponse toResponse(Facture f) {
         return FactureResponse.builder()
@@ -243,6 +366,7 @@ public class FactureService {
             .description(f.getDescription())
             .dateEcheance(f.getDateEcheance())
             .datePaiement(f.getDatePaiement())
+            .preuvePaiement(f.getPreuvePaiement())
             .createdAt(f.getCreatedAt())
             .etudiantId(f.getEtudiant().getId())
             .etudiantNom(f.getEtudiant().getNom())

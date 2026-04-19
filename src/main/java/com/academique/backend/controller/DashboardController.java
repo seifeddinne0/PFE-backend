@@ -29,7 +29,31 @@ public class DashboardController {
         String email = authentication.getName();
         Etudiant etudiant = etudiantRepository.findByEmail(email).orElse(null);
         
-        long totalMatieres = matiereRepository.count();
+        long totalMatieres = 0;
+        if (etudiant != null) {
+            java.util.List<Matiere.Semestre> targetSemestres = new java.util.ArrayList<>();
+            String refCode = (etudiant.getClasse() != null) ? etudiant.getClasse().getCode() : etudiant.getMatricule();
+            
+            if (refCode != null) {
+                if (refCode.contains("LCS1")) {
+                    targetSemestres.add(Matiere.Semestre.S1);
+                    targetSemestres.add(Matiere.Semestre.S2);
+                } else if (refCode.contains("LCS2")) {
+                    targetSemestres.add(Matiere.Semestre.S3);
+                    targetSemestres.add(Matiere.Semestre.S4);
+                } else if (refCode.contains("LCS3")) {
+                    targetSemestres.add(Matiere.Semestre.S5);
+                }
+            }
+
+            if (!targetSemestres.isEmpty()) {
+                totalMatieres = matiereRepository.countBySemestreIn(targetSemestres);
+            } else {
+                totalMatieres = matiereRepository.count();
+            }
+        } else {
+            totalMatieres = matiereRepository.count();
+        }
         long totalAbsences = 0;
         long totalEvaluations = 0;
         
@@ -61,7 +85,12 @@ public class DashboardController {
         String email = authentication.getName();
         Enseignant enseignant = enseignantRepository.findByEmail(email).orElse(null);
         
-        long totalMatieres = matiereRepository.count();
+        long totalMatieres = 0;
+        if (enseignant != null) {
+            totalMatieres = matiereRepository.countByEnseignantId(enseignant.getId());
+        } else {
+            totalMatieres = matiereRepository.count();
+        }
         long notesSaisies = 0;
         long absencesRenseignees = 0;
         

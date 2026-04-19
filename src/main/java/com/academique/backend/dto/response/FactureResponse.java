@@ -16,6 +16,7 @@ public class FactureResponse {
     private String description;
     private LocalDate dateEcheance;
     private LocalDate datePaiement;
+    private String preuvePaiement;
     private LocalDateTime createdAt;
     private Long etudiantId;
     private String etudiantNom;

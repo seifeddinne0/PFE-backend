@@ -32,7 +32,7 @@ public class Note {
     private Semestre semestre = Semestre.S1;
 
     public enum Semestre {
-        S1, S2, S3, S4, S5, S6
+        S1, S2, S3, S4, S5
     }
 
     private String commentaire;

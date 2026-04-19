@@ -22,4 +22,6 @@ public class AbsenceResponse {
     private String matiereNom;
     private String enseignantNom;
     private Long totalAbsences;
+    private Long seanceId;
+    private String classeCode;
 }

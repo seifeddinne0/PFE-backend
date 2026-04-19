@@ -36,12 +36,19 @@ public class Etudiant {
     @Column(nullable = false)
     private Statut statut = Statut.ACTIF;
 
+    @Column
+    private Boolean notesAccessEnabled = false;
+
     private LocalDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
     }
+
+    @ManyToOne
+    @JoinColumn(name = "classe_id")
+    private Classe classe;
 
     @OneToOne
     @JoinColumn(name = "user_id")

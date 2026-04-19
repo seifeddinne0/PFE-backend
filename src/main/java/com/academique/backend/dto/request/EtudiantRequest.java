@@ -25,4 +25,5 @@ public class EtudiantRequest {
     private String adresse;
 
     private Long userId;
+    private Long classeId;
 }

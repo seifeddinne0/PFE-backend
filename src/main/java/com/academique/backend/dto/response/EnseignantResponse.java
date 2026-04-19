@@ -19,6 +19,7 @@ public class EnseignantResponse {
     private String specialite;
     private String grade;
     private String statut;
+    private boolean canManageNotes;
     private LocalDateTime createdAt;
     private String userEmail;
     private String photo;

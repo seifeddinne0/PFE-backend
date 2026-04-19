@@ -74,6 +74,14 @@ public class EtudiantController {
         return ResponseEntity.ok(etudiantService.update(id, request));
     }
 
+    @PatchMapping("/admin/etudiants/{id}/notes-access")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<EtudiantResponse> setNotesAccess(
+            @PathVariable(name = "id") Long id,
+            @RequestParam(name = "enabled") boolean enabled) {
+        return ResponseEntity.ok(etudiantService.setNotesAccess(id, enabled));
+    }
+
     @DeleteMapping("/admin/etudiants/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<String> delete(

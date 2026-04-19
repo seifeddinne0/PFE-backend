@@ -115,6 +115,31 @@ public class EnseignantService {
         return enseignantRepository.search(query, pageable).map(this::toResponse);
     }
 
+    public EnseignantResponse setNotesAccess(Long id, boolean enabled) {
+        Enseignant enseignant = enseignantRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+        enseignant.setCanManageNotes(enabled);
+        return toResponse(enseignantRepository.save(enseignant));
+    }
+
+    public int setNotesAccessToAll(boolean enabled) {
+        List<Enseignant> enseignants = enseignantRepository.findAll();
+        int updated = 0;
+
+        for (Enseignant enseignant : enseignants) {
+            if (enseignant.isCanManageNotes() != enabled) {
+                enseignant.setCanManageNotes(enabled);
+                updated++;
+            }
+        }
+
+        if (updated > 0) {
+            enseignantRepository.saveAll(enseignants);
+        }
+
+        return updated;
+    }
+
     private String generateMatricule() {
         int year = Year.now().getValue();
         long count = enseignantRepository.count() + 1;
@@ -189,6 +214,7 @@ public class EnseignantService {
             .specialite(e.getSpecialite())
             .grade(e.getGrade())
             .statut(e.getStatut().name())
+            .canManageNotes(e.isCanManageNotes())
             .createdAt(e.getCreatedAt())
             .userEmail(e.getUser() != null ? e.getUser().getEmail() : null)
             .photo(e.getUser() != null ? e.getUser().getPhoto() : null)

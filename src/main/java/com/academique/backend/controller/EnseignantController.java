@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
@@ -82,6 +83,28 @@ public class EnseignantController {
             @PathVariable(name = "id") Long id) {
         enseignantService.delete(id);
         return ResponseEntity.ok("Enseignant supprimé avec succès");
+    }
+
+    @PatchMapping("/admin/enseignants/{id}/notes-access")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<EnseignantResponse> setNotesAccess(
+            @PathVariable(name = "id") Long id,
+            @RequestParam(name = "enabled") boolean enabled) {
+        return ResponseEntity.ok(enseignantService.setNotesAccess(id, enabled));
+    }
+
+    @PatchMapping("/admin/enseignants/notes-access/all")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> setNotesAccessToAll(
+            @RequestParam(name = "enabled", defaultValue = "true") boolean enabled) {
+        int updated = enseignantService.setNotesAccessToAll(enabled);
+        return ResponseEntity.ok(Map.of(
+            "updated", updated,
+            "enabled", enabled,
+            "message", enabled
+                ? "Accès notes accordé à tous les enseignants"
+                : "Accès notes retiré pour tous les enseignants"
+        ));
     }
 
     @GetMapping("/enseignant/profil")

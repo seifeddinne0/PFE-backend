@@ -1,6 +1,7 @@
 package com.academique.backend.controller;
 
 import com.academique.backend.dto.request.FactureRequest;
+import com.academique.backend.dto.request.BatchFactureRequest;
 import com.academique.backend.dto.response.FactureResponse;
 import com.academique.backend.service.FactureService;
 import jakarta.validation.Valid;
@@ -8,10 +9,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +35,14 @@ public class FactureController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(factureService.create(request));
     }
+
+        @PostMapping("/admin/factures/batch")
+        @PreAuthorize("hasRole('ADMIN')")
+        public ResponseEntity<Map<String, Object>> createBatch(
+            @Valid @RequestBody BatchFactureRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+            .body(factureService.createBatch(request));
+        }
 
     // ✅ Routes spécifiques AVANT /{id}
     @GetMapping("/admin/factures/stats")
@@ -127,5 +141,16 @@ public class FactureController {
             org.springframework.security.core.Authentication authentication) {
         return ResponseEntity.ok(
             factureService.getByEtudiantEmail(authentication.getName()));
+    }
+
+    @PostMapping(value = "/etudiant/factures/{id}/confirmation-paiement", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('ETUDIANT')")
+    public ResponseEntity<FactureResponse> confirmerPaiementEtudiant(
+            @PathVariable(name = "id") Long id,
+            @RequestParam(name = "datePaiement") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate datePaiement,
+            @RequestParam(name = "image") MultipartFile image,
+            Authentication authentication) {
+        return ResponseEntity.ok(
+            factureService.confirmerPaiementEtudiant(id, authentication.getName(), datePaiement, image));
     }
 }

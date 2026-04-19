@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
@@ -76,6 +77,25 @@ public class NoteController {
                 .body(pdf);
     }
 
+    @GetMapping("/admin/notes/bulletin/complet/{etudiantId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT')")
+    public ResponseEntity<byte[]> getBulletinComplet(
+            @PathVariable(name = "etudiantId") Long etudiantId) {
+        byte[] pdf = noteService.exportBulletinPdfComplet(etudiantId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header("Content-Disposition",
+                    "attachment; filename=bulletin_complet_" + etudiantId + ".pdf")
+                .body(pdf);
+    }
+
+    @PostMapping("/admin/notes/bulletins/envoyer")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> envoyerBulletinsParNiveau(
+            @RequestParam(name = "niveauCode") String niveauCode) {
+        return ResponseEntity.ok(noteService.envoyerBulletinsParNiveau(niveauCode));
+    }
+
     @GetMapping("/admin/notes/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT')")
     public ResponseEntity<NoteResponse> getById(
@@ -92,7 +112,7 @@ public class NoteController {
     }
 
     @DeleteMapping("/admin/notes/{id}")
-    @PreAuthorize("hasAnyRole('ENSEIGNANT')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT')")
     public ResponseEntity<String> delete(
             @PathVariable(name = "id") Long id) {
         noteService.delete(id);
@@ -106,5 +126,17 @@ public class NoteController {
             org.springframework.security.core.Authentication authentication) {
         String email = authentication.getName();
         return ResponseEntity.ok(noteService.getByEtudiantEmail(email));
+    }
+
+    @GetMapping("/etudiant/notes/bulletin")
+    @PreAuthorize("hasRole('ETUDIANT')")
+    public ResponseEntity<byte[]> monBulletinComplet(
+            org.springframework.security.core.Authentication authentication) {
+        String email = authentication.getName();
+        byte[] pdf = noteService.exportBulletinPdfCompletByEmail(email);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header("Content-Disposition", "attachment; filename=mon_bulletin_complet.pdf")
+                .body(pdf);
     }
 }

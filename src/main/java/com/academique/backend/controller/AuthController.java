@@ -1,7 +1,9 @@
 package com.academique.backend.controller;
 
 import com.academique.backend.dto.request.LoginRequest;
+import com.academique.backend.dto.request.ForgotPasswordRequest;
 import com.academique.backend.dto.request.RefreshTokenRequest;
+import com.academique.backend.dto.request.ResetPasswordRequest;
 import com.academique.backend.dto.response.AuthResponse;
 import com.academique.backend.service.AuthService;
 import jakarta.validation.Valid;
@@ -9,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -31,6 +35,27 @@ public class AuthController {
     public ResponseEntity<String> logout(Authentication authentication) {
         // JWT est stateless — le client supprime le token côté frontend
         return ResponseEntity.ok("Déconnexion réussie");
+    }
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, String>> forgotPassword(
+        @Valid @RequestBody ForgotPasswordRequest request
+    ) {
+        return ResponseEntity.ok(authService.forgotPassword(request));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Map<String, String>> resetPassword(
+        @Valid @RequestBody ResetPasswordRequest request
+    ) {
+        return ResponseEntity.ok(authService.resetPassword(request));
+    }
+
+    @GetMapping("/validate-token")
+    public ResponseEntity<Map<String, Object>> validateToken(
+        @RequestParam("token") String token
+    ) {
+        return ResponseEntity.ok(authService.validateResetToken(token));
     }
 
     @GetMapping("/me")

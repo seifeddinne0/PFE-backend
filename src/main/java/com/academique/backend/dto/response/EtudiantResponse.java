@@ -25,4 +25,7 @@ public class EtudiantResponse {
     private LocalDateTime createdAt;
     private String userEmail;
     private String photo;
+    private Long classeId;
+    private String classeCode;
+    private Boolean notesAccessEnabled;
 }

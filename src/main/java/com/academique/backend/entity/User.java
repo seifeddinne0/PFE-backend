@@ -2,6 +2,7 @@ package com.academique.backend.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import java.time.LocalDateTime;
 import java.util.Set;
 
 @Data
@@ -22,6 +23,12 @@ public class User {
     private String photo;
     private String nom;
     private String prenom;
+
+    @Column(name = "reset_token", length = 255)
+    private String resetToken;
+
+    @Column(name = "reset_token_expiry")
+    private LocalDateTime resetTokenExpiry;
 
     private boolean actif = true;
 

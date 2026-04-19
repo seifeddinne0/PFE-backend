@@ -11,6 +11,7 @@ public class DemandeDocumentResponse {
     private Long id;
     private String typeDocument;
     private String statut;
+    private String monStatut;
     private String motif;
     private String commentaireAdmin;
     private String nomEntrepriseStage;

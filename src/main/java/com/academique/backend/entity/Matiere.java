@@ -28,7 +28,11 @@ public class Matiere {
     @Column(nullable = false)
     private Semestre semestre = Semestre.S1;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "enseignant_id")
+    private Enseignant enseignant;
+
     public enum Semestre {
-        S1, S2, S3, S4, S5, S6
+        S1, S2, S3, S4, S5
     }
 }

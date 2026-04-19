@@ -8,4 +8,7 @@ public interface MatiereRepository extends JpaRepository<Matiere, Long> {
     Optional<Matiere> findByNom(String nom);
     boolean existsByNom(String nom);
     java.util.List<Matiere> findBySemestre(Matiere.Semestre semestre);
+    long countByCodeStartingWith(String prefix);
+    long countByEnseignantId(Long enseignantId);
+    long countBySemestreIn(java.util.List<Matiere.Semestre> semestres);
 }
