@@ -28,7 +28,7 @@ public class Facture {
     private Statut statut = Statut.NON_PAYEE;
 
     public enum Statut {
-        PAYEE, NON_PAYEE, EN_ATTENTE, ANNULEE
+        PAYEE, NON_PAYEE, EN_ATTENTE, REJETEE, ANNULEE
     }
 
     @Enumerated(EnumType.STRING)
@@ -36,6 +36,13 @@ public class Facture {
 
     public enum TypeFacture {
         SCOLARITE, INSCRIPTION, BIBLIOTHEQUE, AUTRE
+    }
+
+    @Enumerated(EnumType.STRING)
+    private TypePaiement typePaiement;
+
+    public enum TypePaiement {
+        UNE_TRANCHE, DEUX_TRANCHES
     }
 
     private String description;

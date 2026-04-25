@@ -21,6 +21,7 @@ public class SeanceResponse {
     private Long matiereId;
     private String matiereNom;
     private String matiereCode;
+    private String semestre;
 
     // Classe info
     private Long classeId;

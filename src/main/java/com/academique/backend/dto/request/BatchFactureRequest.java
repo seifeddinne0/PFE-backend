@@ -16,6 +16,7 @@ public class BatchFactureRequest {
     private Double montant;
 
     private String typeFacture;
+    private String typePaiement;
     private String description;
     private LocalDate dateEcheance;
 }

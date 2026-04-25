@@ -17,4 +17,5 @@ public class EnseignantRequest {
     private String specialite;
     private String grade;
     private Long userId;
+    private Long filiereId;
 }

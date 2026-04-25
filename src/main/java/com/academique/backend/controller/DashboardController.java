@@ -74,6 +74,9 @@ public class DashboardController {
             if (etudiant.getUser() != null && etudiant.getUser().getPhoto() != null) {
                 response.put("photo", etudiant.getUser().getPhoto());
             }
+            if (etudiant.getClasse() != null && etudiant.getClasse().getNiveau() != null) {
+                response.put("niveauCode", etudiant.getClasse().getNiveau().getCode());
+            }
         }
         return ResponseEntity.ok(response);
     }

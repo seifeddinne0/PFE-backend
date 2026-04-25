@@ -13,6 +13,7 @@ public class FactureResponse {
     private Double montant;
     private String statut;
     private String typeFacture;
+    private String typePaiement;
     private String description;
     private LocalDate dateEcheance;
     private LocalDate datePaiement;

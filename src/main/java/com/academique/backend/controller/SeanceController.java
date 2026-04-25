@@ -106,6 +106,15 @@ public class SeanceController {
         return ResponseEntity.ok(new ArrayList<>(uniqueTeachers.values()));
     }
 
+    @GetMapping("/etudiant/seances")
+    @PreAuthorize("hasRole('ETUDIANT')")
+    public ResponseEntity<List<SeanceResponse>> mesSeancesEtudiant(Authentication authentication) {
+        Etudiant etudiant = etudiantRepository.findByEmail(authentication.getName())
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        if (etudiant.getClasse() == null) return ResponseEntity.ok(List.of());
+        return ResponseEntity.ok(seanceService.getByClasseId(etudiant.getClasse().getId()));
+    }
+
     @GetMapping("/enseignant/agenda-absences")
     @PreAuthorize("hasRole('ENSEIGNANT')")
     public ResponseEntity<AgendaAbsenceResponse> agendaAbsences(

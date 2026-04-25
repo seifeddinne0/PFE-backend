@@ -23,4 +23,7 @@ public class EnseignantResponse {
     private LocalDateTime createdAt;
     private String userEmail;
     private String photo;
+    private Long filiereId;
+    private String filiereNom;
+    private String filiereCode;
 }

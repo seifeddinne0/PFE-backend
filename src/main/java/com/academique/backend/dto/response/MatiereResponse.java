@@ -13,4 +13,8 @@ public class MatiereResponse {
     private Double coefficient;
     private String semestre;
     private Long enseignantId;
+    private Long niveauId;
+    private String niveauCode;
+    private String filiereNom;
+    private String filiereCode;
 }

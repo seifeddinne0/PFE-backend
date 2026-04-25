@@ -2,7 +2,9 @@ package com.academique.backend.controller;
 
 import com.academique.backend.dto.request.EnseignantRequest;
 import com.academique.backend.dto.response.EnseignantResponse;
+import com.academique.backend.dto.response.MatiereResponse;
 import com.academique.backend.service.EnseignantService;
+import com.academique.backend.service.MatiereService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -22,6 +24,7 @@ import java.util.Map;
 public class EnseignantController {
 
     private final EnseignantService enseignantService;
+    private final MatiereService matiereService;
 
     @PostMapping("/admin/enseignants")
     @PreAuthorize("hasRole('ADMIN')")
@@ -113,5 +116,21 @@ public class EnseignantController {
             org.springframework.security.core.Authentication authentication) {
         String email = authentication.getName();
         return ResponseEntity.ok(enseignantService.getByEmail(email));
+    }
+
+    @GetMapping("/admin/enseignants/{id}/matieres")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<java.util.List<MatiereResponse>> getMatieres(
+            @PathVariable Long id) {
+        return ResponseEntity.ok(matiereService.getMatieresByEnseignant(id));
+    }
+
+    @PostMapping("/admin/enseignants/{id}/matieres")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> updateMatieres(
+            @PathVariable Long id,
+            @RequestBody java.util.List<Long> matiereIds) {
+        matiereService.updateEnseignantMatieres(id, matiereIds);
+        return ResponseEntity.ok().build();
     }
 }

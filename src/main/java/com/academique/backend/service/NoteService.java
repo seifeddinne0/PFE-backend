@@ -34,6 +34,7 @@ public class NoteService {
     private final EtudiantRepository etudiantRepository;
     private final MatiereRepository matiereRepository;
     private final EnseignantRepository enseignantRepository;
+    private final NotificationService notificationService;
     private final Optional<JavaMailSender> mailSender;
 
     public NoteResponse create(NoteRequest request) {
@@ -58,7 +59,19 @@ public class NoteService {
                 .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
             note.setEnseignant(enseignant);
         }
-        return toResponse(noteRepository.save(note));
+        Note saved = noteRepository.save(note);
+
+        // Notify Student
+        notificationService.createNotification(
+            etudiant.getUser().getId(),
+            "ETUDIANT",
+            "Nouvelle note disponible",
+            "Une nouvelle note de " + saved.getValeur() + "/20 a été ajoutée pour la matière : " + matiere.getNom(),
+            "NOTE",
+            etudiant.getEmail()
+        );
+
+        return toResponse(saved);
     }
 
     public Page<NoteResponse> getAll(Pageable pageable) {

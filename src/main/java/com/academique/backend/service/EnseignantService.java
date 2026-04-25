@@ -5,13 +5,16 @@ import com.academique.backend.dto.response.EnseignantResponse;
 import com.academique.backend.entity.Enseignant;
 import com.academique.backend.entity.Role;
 import com.academique.backend.entity.User;
+import com.academique.backend.entity.Filiere;
 import com.academique.backend.exception.ResourceNotFoundException;
 import com.academique.backend.repository.EnseignantRepository;
+import com.academique.backend.repository.FiliereRepository;
 import com.academique.backend.repository.RoleRepository;
 import com.academique.backend.repository.UserRepository;
 import com.itextpdf.text.*;
 import com.itextpdf.text.pdf.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -29,6 +32,11 @@ public class EnseignantService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final FiliereRepository filiereRepository;
+    private final NotificationService notificationService;
+
+    @Value("${app.notifications.enseignant.test-email:}")
+    private String testEnseignantEmail;
 
     public EnseignantResponse create(EnseignantRequest request) {
         if (enseignantRepository.existsByEmail(request.getEmail())) {
@@ -59,6 +67,12 @@ public class EnseignantService {
         enseignant.setGrade(request.getGrade());
         enseignant.setMatricule(generateMatricule());
         enseignant.setUser(savedUser);
+        
+        if (request.getFiliereId() != null) {
+            Filiere filiere = filiereRepository.findById(request.getFiliereId())
+                .orElseThrow(() -> new ResourceNotFoundException("Filière non trouvée"));
+            enseignant.setFiliere(filiere);
+        }
 
         return toResponse(enseignantRepository.save(enseignant));
     }
@@ -101,6 +115,14 @@ public class EnseignantService {
             userRepository.save(user);
         }
 
+        if (request.getFiliereId() != null) {
+            Filiere filiere = filiereRepository.findById(request.getFiliereId())
+                .orElseThrow(() -> new ResourceNotFoundException("Filière non trouvée"));
+            enseignant.setFiliere(filiere);
+        } else {
+            enseignant.setFiliere(null);
+        }
+
         return toResponse(enseignantRepository.save(enseignant));
     }
 
@@ -119,7 +141,22 @@ public class EnseignantService {
         Enseignant enseignant = enseignantRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
         enseignant.setCanManageNotes(enabled);
-        return toResponse(enseignantRepository.save(enseignant));
+        Enseignant saved = enseignantRepository.save(enseignant);
+
+        if (saved.getUser() != null) {
+            notificationService.createNotification(
+                saved.getUser().getId(),
+                "ENSEIGNANT",
+                enabled ? "Accès autorisé" : "Accès retiré",
+                enabled
+                    ? "L'administration vous a autorisé à gérer les notes des étudiants."
+                    : "L'administration a retiré votre accès de gestion des notes des étudiants.",
+                "ACCESS",
+                shouldSendEmailToThisEnseignant(saved.getEmail()) ? saved.getEmail() : null
+            );
+        }
+
+        return toResponse(saved);
     }
 
     public int setNotesAccessToAll(boolean enabled) {
@@ -130,6 +167,19 @@ public class EnseignantService {
             if (enseignant.isCanManageNotes() != enabled) {
                 enseignant.setCanManageNotes(enabled);
                 updated++;
+
+                if (enseignant.getUser() != null) {
+                    notificationService.createNotification(
+                        enseignant.getUser().getId(),
+                        "ENSEIGNANT",
+                        enabled ? "Accès autorisé" : "Accès retiré",
+                        enabled
+                            ? "L'administration vous a autorisé à gérer les notes des étudiants."
+                            : "L'administration a retiré votre accès de gestion des notes des étudiants.",
+                        "ACCESS",
+                        shouldSendEmailToThisEnseignant(enseignant.getEmail()) ? enseignant.getEmail() : null
+                    );
+                }
             }
         }
 
@@ -144,6 +194,14 @@ public class EnseignantService {
         int year = Year.now().getValue();
         long count = enseignantRepository.count() + 1;
         return String.format("ENS-%d-%04d", year, count);
+    }
+
+    private boolean shouldSendEmailToThisEnseignant(String enseignantEmail) {
+        if (testEnseignantEmail == null || testEnseignantEmail.isBlank()) {
+            return true;
+        }
+        return enseignantEmail != null
+            && enseignantEmail.trim().equalsIgnoreCase(testEnseignantEmail.trim());
     }
 
     public byte[] exportPdf() {
@@ -218,6 +276,9 @@ public class EnseignantService {
             .createdAt(e.getCreatedAt())
             .userEmail(e.getUser() != null ? e.getUser().getEmail() : null)
             .photo(e.getUser() != null ? e.getUser().getPhoto() : null)
+            .filiereId(e.getFiliere() != null ? e.getFiliere().getId() : null)
+            .filiereNom(e.getFiliere() != null ? e.getFiliere().getNom() : null)
+            .filiereCode(e.getFiliere() != null ? e.getFiliere().getCode() : null)
             .build();
     }
 }

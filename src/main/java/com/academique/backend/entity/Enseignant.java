@@ -57,4 +57,8 @@ public class Enseignant {
     @OneToOne
     @JoinColumn(name = "user_id")
     private User user;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "filiere_id")
+    private Filiere filiere;
 }

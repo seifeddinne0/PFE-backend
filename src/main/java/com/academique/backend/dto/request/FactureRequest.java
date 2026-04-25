@@ -9,6 +9,7 @@ public class FactureRequest {
     @NotNull private Long etudiantId;
     @NotNull private Double montant;
     private String typeFacture;
+    private String typePaiement;
     private String description;
     private LocalDate dateEcheance;
     private String statut;

@@ -141,9 +141,21 @@ public class AbsenceController {
     public ResponseEntity<AbsenceResponse> demanderJustification(
             @PathVariable(name = "id") Long id,
             @RequestParam(name = "commentaire", required = false) String commentaire,
-            @RequestParam(name = "image") MultipartFile image,
+            @RequestParam(name = "file") MultipartFile file,
             Authentication authentication) {
         return ResponseEntity.ok(
-            absenceService.demanderJustificationEtudiant(id, authentication.getName(), commentaire, image));
+            absenceService.demanderJustificationEtudiant(id, authentication.getName(), commentaire, file));
+    }
+
+    @PatchMapping("/admin/absences/{id}/approve")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<AbsenceResponse> approve(@PathVariable Long id) {
+        return ResponseEntity.ok(absenceService.approveJustification(id));
+    }
+
+    @PatchMapping("/admin/absences/{id}/reject")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<AbsenceResponse> reject(@PathVariable Long id) {
+        return ResponseEntity.ok(absenceService.rejectJustification(id));
     }
 }

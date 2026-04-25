@@ -11,4 +11,5 @@ public interface MatiereRepository extends JpaRepository<Matiere, Long> {
     long countByCodeStartingWith(String prefix);
     long countByEnseignantId(Long enseignantId);
     long countBySemestreIn(java.util.List<Matiere.Semestre> semestres);
+    java.util.List<Matiere> findByEnseignant(com.academique.backend.entity.Enseignant enseignant);
 }

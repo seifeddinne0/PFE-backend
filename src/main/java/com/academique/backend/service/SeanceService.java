@@ -63,6 +63,12 @@ public class SeanceService {
         return getByEnseignant(enseignant.getId());
     }
 
+    public List<SeanceResponse> getByClasseId(Long classeId) {
+        return seanceRepository.findByClasseId(classeId).stream()
+            .map(this::toResponse)
+            .toList();
+    }
+
     public AgendaAbsenceResponse getAgendaAbsencesForTeacher(
         String enseignantEmail,
         String filiereCode,
@@ -227,6 +233,7 @@ public class SeanceService {
             .matiereId(s.getMatiere().getId())
             .matiereNom(s.getMatiere().getNom())
             .matiereCode(s.getMatiere().getCode())
+            .semestre(s.getMatiere().getSemestre() != null ? s.getMatiere().getSemestre().name() : null)
             .classeId(s.getClasse().getId())
             .classeCode(s.getClasse().getCode())
             .classeNom(s.getClasse().getNom())

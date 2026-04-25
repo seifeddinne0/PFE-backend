@@ -32,6 +32,10 @@ public class Matiere {
     @JoinColumn(name = "enseignant_id")
     private Enseignant enseignant;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "niveau_id")
+    private Niveau niveau;
+
     public enum Semestre {
         S1, S2, S3, S4, S5
     }

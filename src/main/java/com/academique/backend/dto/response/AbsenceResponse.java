@@ -13,6 +13,7 @@ public class AbsenceResponse {
     private String statut;
     private String motif;
     private String justification;
+    private String preuveJustification;
     private Boolean alerte;
     private LocalDateTime createdAt;
     private Long etudiantId;
@@ -24,4 +25,6 @@ public class AbsenceResponse {
     private Long totalAbsences;
     private Long seanceId;
     private String classeCode;
+    private String niveauCode;
+    private String filiereNom;
 }

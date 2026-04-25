@@ -27,6 +27,7 @@ public class DemandeDocumentService {
     private final EtudiantRepository etudiantRepository;
     private final EnseignantRepository enseignantRepository;
     private final ValidationEnseignantRepository validationRepository;
+    private final NotificationService notificationService;
 
     private static final DateTimeFormatter DATE_FORMAT =
         DateTimeFormatter.ofPattern("dd/MM/yyyy");
@@ -68,7 +69,27 @@ public class DemandeDocumentService {
                 validation.setEnseignant(ens);
                 validation.setStatut(ValidationEnseignant.Statut.EN_ATTENTE);
                 validationRepository.save(validation);
+
+                // Notify Teacher
+                notificationService.createNotification(
+                    ens.getUser().getId(),
+                    "ENSEIGNANT",
+                    "Nouveau document à valider",
+                    "L'étudiant " + etudiant.getNom() + " " + etudiant.getPrenom() + " a sollicité votre signature pour une attestation.",
+                    "DOCUMENT",
+                    ens.getEmail()
+                );
             }
+        } else {
+            // Notify Admin (In-app only)
+            notificationService.createNotification(
+                0L,
+                "ADMIN",
+                "Nouveau document à valider",
+                "Une nouvelle demande de document (" + saved.getTypeDocument() + ") a été soumise par " + etudiant.getNom() + " " + etudiant.getPrenom(),
+                "DOCUMENT",
+                null
+            );
         }
 
         return toResponse(saved);
@@ -130,8 +151,26 @@ public class DemandeDocumentService {
 
         if (tousValides) {
             demande.setStatut(DemandeDocument.Statut.VALIDEE);
+            // Notify student
+            notificationService.createNotification(
+                demande.getEtudiant().getUser().getId(),
+                "ETUDIANT",
+                "Document validé par les enseignants",
+                "Votre demande de document " + demande.getTypeDocument() + " a été validée par tous les enseignants requis.",
+                "DOCUMENT",
+                demande.getEtudiant().getEmail()
+            );
         } else if (unRejete) {
             demande.setStatut(DemandeDocument.Statut.REJETEE);
+            // Notify student
+            notificationService.createNotification(
+                demande.getEtudiant().getUser().getId(),
+                "ETUDIANT",
+                "Document rejeté par un enseignant",
+                "Votre demande de document " + demande.getTypeDocument() + " a été rejetée par l'un des enseignants.",
+                "DOCUMENT",
+                demande.getEtudiant().getEmail()
+            );
         }
 
         return toResponse(demandeRepository.save(demande));
@@ -144,7 +183,19 @@ public class DemandeDocumentService {
         demande.setStatut(valide ?
             DemandeDocument.Statut.VALIDEE : DemandeDocument.Statut.REJETEE);
         demande.setCommentaireAdmin(commentaire);
-        return toResponse(demandeRepository.save(demande));
+        DemandeDocument saved = demandeRepository.save(demande);
+
+        // Notify Student
+        notificationService.createNotification(
+            saved.getEtudiant().getUser().getId(),
+            "ETUDIANT",
+            valide ? "Document validé par l'admin" : "Document rejeté par l'admin",
+            "Votre demande de document " + saved.getTypeDocument() + " a été " + (valide ? "validée" : "rejetée") + " par l'administration.",
+            "DOCUMENT",
+            saved.getEtudiant().getEmail()
+        );
+
+        return toResponse(saved);
     }
 
     // ─── ADMIN MARQUE ENVOYÉE ─────────────────────────────

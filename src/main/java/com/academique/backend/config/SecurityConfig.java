@@ -76,6 +76,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/admin/classes").hasAnyRole("ADMIN", "ENSEIGNANT")
                 .requestMatchers(HttpMethod.GET, "/api/admin/filieres").hasAnyRole("ADMIN", "ENSEIGNANT")
 
+                // Chat — accessible à tous les utilisateurs authentifiés
+                .requestMatchers("/api/chat/**").authenticated()
+
                 // Reste — admin seulement
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/enseignant/**").hasRole("ENSEIGNANT")

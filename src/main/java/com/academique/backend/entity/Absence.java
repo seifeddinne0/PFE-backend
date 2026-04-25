@@ -30,6 +30,7 @@ public class Absence {
 
     private String motif;
     private String justification;
+    private String preuveJustification;
     private Boolean alerte = false;
 
     @Column(updatable = false)

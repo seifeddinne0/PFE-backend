@@ -9,8 +9,10 @@ import com.academique.backend.entity.Role;
 import com.academique.backend.entity.Seance;
 import com.academique.backend.entity.User;
 import com.academique.backend.repository.ClasseRepository;
+import com.academique.backend.repository.DocumentConfigRepository;
 import com.academique.backend.repository.EtudiantRepository;
 import com.academique.backend.repository.FiliereRepository;
+import com.academique.backend.repository.MatiereRepository;
 import com.academique.backend.repository.NiveauRepository;
 import com.academique.backend.repository.RoleRepository;
 import com.academique.backend.repository.SeanceRepository;
@@ -38,10 +40,21 @@ public class DataInitializer {
     private final ClasseRepository classeRepository;
     private final EtudiantRepository etudiantRepository;
     private final SeanceRepository seanceRepository;
+    private final MatiereRepository matiereRepository;
+    private final DocumentConfigRepository documentConfigRepository;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     @Bean
     public CommandLineRunner initData() {
         return args -> {
+            
+            // Drop outdated database constraint safely
+            try {
+                jdbcTemplate.execute("ALTER TABLE factures DROP CONSTRAINT IF EXISTS factures_statut_check");
+                System.out.println("✅ Constraint 'factures_statut_check' dropped safely.");
+            } catch (Exception e) {
+                System.err.println("⚠️ Could not drop constraint: " + e.getMessage());
+            }
 
             // Crée les rôles si ils n'existent pas
             if (roleRepository.count() == 0) {
@@ -185,6 +198,79 @@ public class DataInitializer {
             if (!seancesToPatch.isEmpty()) {
                 seanceRepository.saveAll(seancesToPatch);
                 System.out.println("✅ Seances reaffectees aux bonnes classes: " + seancesToPatch.size());
+            }
+
+            // 4. Rattachement des Matières aux Niveaux (Groupement hiérarchique)
+            System.out.println("🔍 Scan des matières pour rattachement hiérarchique...");
+            List<Matiere> allMatieres = matiereRepository.findAll();
+            System.out.println("   📊 Total matières trouvées: " + allMatieres.size());
+            
+            List<Matiere> matieresToPatch = new ArrayList<>();
+            for (Matiere matiere : allMatieres) {
+                String code = matiere.getCode();
+                if (code == null) {
+                    System.out.println("   ⚠️ Matière sans code (ID: " + matiere.getId() + ")");
+                    continue;
+                }
+
+                String cleanCode = code.trim().toUpperCase();
+                String targetNiveauCode = null;
+
+                // Mapping logic based on Semester (S1-S5) found in the code
+                if (cleanCode.contains("-S1") || cleanCode.contains("-S2") || cleanCode.contains("LCS1") || cleanCode.contains("LBC1") || cleanCode.contains("LCE1")) {
+                    targetNiveauCode = cleanCode.contains("LBC") ? "LBC1" : (cleanCode.contains("LCE") ? "LCE1" : "LCS1");
+                }
+                if (cleanCode.contains("-S3") || cleanCode.contains("-S4") || cleanCode.contains("LCS2") || cleanCode.contains("LBC2") || cleanCode.contains("LCE2")) {
+                    targetNiveauCode = cleanCode.contains("LBC") ? "LBC2" : (cleanCode.contains("LCE") ? "LCE2" : "LCS2");
+                }
+                if (cleanCode.contains("-S5") || cleanCode.contains("LCS3") || cleanCode.contains("LBC3") || cleanCode.contains("LCE3")) {
+                    targetNiveauCode = cleanCode.contains("LBC") ? "LBC3" : (cleanCode.contains("LCE") ? "LCE3" : "LCS3");
+                }
+
+                // Override based on explicit Semester mention to satisfy user request:
+                // S5 -> Level 3 | S3, S4 -> Level 2 | S1, S2 -> Level 1
+                String prefix = cleanCode.contains("LBC") ? "LBC" : (cleanCode.contains("LCE") ? "LCE" : "LCS");
+                if (cleanCode.contains("-S1") || cleanCode.contains("-S2")) targetNiveauCode = prefix + "1";
+                else if (cleanCode.contains("-S3") || cleanCode.contains("-S4")) targetNiveauCode = prefix + "2";
+                else if (cleanCode.contains("-S5")) targetNiveauCode = prefix + "3";
+
+                if (targetNiveauCode != null) {
+                    final String codeToSearch = targetNiveauCode;
+                    Optional<Niveau> nivOpt = niveauRepository.findByCode(codeToSearch);
+                    if (nivOpt.isPresent()) {
+                        matiere.setNiveau(nivOpt.get());
+                        matieresToPatch.add(matiere);
+                        System.out.println("   🔗 MATCH: " + code + " -> " + codeToSearch);
+                    } else {
+                        System.err.println("   ❌ ERREUR: Niveau '" + codeToSearch + "' introuvable pour matière " + code);
+                    }
+                } else {
+                    System.out.println("   ❓ PAS DE MATCH pour code: " + code);
+                }
+            }
+
+            if (!matieresToPatch.isEmpty()) {
+                matiereRepository.saveAll(matieresToPatch);
+                System.out.println("✅ TOTAL Matieres rattachees: " + matieresToPatch.size());
+            } else {
+                System.out.println("ℹ️ Fin du scan: Aucune nouvelle matière à rattacher.");
+            }
+
+            // 5. Document Configs
+            if (documentConfigRepository.count() == 0) {
+                String[] types = {
+                    "ATTESTATION_PRESENCE", "RELEVE_NOTES", 
+                    "DEMANDE_STAGE", "VALIDATION_STAGE", 
+                    "ATTESTATION_REUSSITE", "ATTESTATION_AFFECTATION"
+                };
+                for (String t : types) {
+                    documentConfigRepository.save(com.academique.backend.entity.DocumentConfig.builder()
+                        .typeDocument(t)
+                        .enabled(true)
+                        .levelRequired(t.contains("STAGE") ? 3 : null)
+                        .build());
+                }
+                System.out.println("✅ Document Configs initialisés");
             }
         };
     }

@@ -11,4 +11,6 @@ public class MatiereRequest {
     private String description;
     @NotNull private Double coefficient;
     @NotNull private String semestre;
+    private Long enseignantId;
+    private Long niveauId;
 }

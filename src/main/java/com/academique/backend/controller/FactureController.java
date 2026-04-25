@@ -122,9 +122,16 @@ public class FactureController {
 
     @PatchMapping("/admin/factures/{id}/annuler")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<FactureResponse> annuler(
+    public ResponseEntity<FactureResponse> cancel(
             @PathVariable(name = "id") Long id) {
-        return ResponseEntity.ok(factureService.annuler(id));
+        return ResponseEntity.ok(factureService.cancel(id));
+    }
+
+    @PatchMapping("/admin/factures/{id}/rejeter")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<FactureResponse> reject(
+            @PathVariable(name = "id") Long id) {
+        return ResponseEntity.ok(factureService.reject(id));
     }
 
     @DeleteMapping("/admin/factures/{id}")
