@@ -71,8 +71,11 @@ public class SeanceController {
 
     @GetMapping("/enseignant/seances")
     @PreAuthorize("hasRole('ENSEIGNANT')")
-    public ResponseEntity<List<SeanceResponse>> mesSeances(Authentication authentication) {
-        return ResponseEntity.ok(seanceService.getByEnseignantEmail(authentication.getName()));
+    public ResponseEntity<List<SeanceResponse>> mesSeances(
+        Authentication authentication,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate referenceDate
+    ) {
+        return ResponseEntity.ok(seanceService.getByEnseignantEmail(authentication.getName(), referenceDate));
     }
 
     // ─── Étudiant: get only my teachers ───────────────────────

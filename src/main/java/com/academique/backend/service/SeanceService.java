@@ -52,19 +52,29 @@ public class SeanceService {
     }
 
     public List<SeanceResponse> getByEnseignant(Long enseignantId) {
-        return seanceRepository.findByEnseignantId(enseignantId).stream()
+        return getByEnseignant(enseignantId, LocalDate.now());
+    }
+
+    public List<SeanceResponse> getByEnseignant(Long enseignantId, LocalDate referenceDate) {
+        return filterSeancesByDate(seanceRepository.findByEnseignantId(enseignantId), referenceDate)
+            .stream()
             .map(this::toResponse)
             .toList();
     }
 
     public List<SeanceResponse> getByEnseignantEmail(String email) {
+        return getByEnseignantEmail(email, LocalDate.now());
+    }
+
+    public List<SeanceResponse> getByEnseignantEmail(String email, LocalDate referenceDate) {
         Enseignant enseignant = enseignantRepository.findByEmail(email)
             .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
-        return getByEnseignant(enseignant.getId());
+        return getByEnseignant(enseignant.getId(), referenceDate);
     }
 
     public List<SeanceResponse> getByClasseId(Long classeId) {
-        return seanceRepository.findByClasseId(classeId).stream()
+        return filterSeancesByDate(seanceRepository.findByClasseId(classeId), LocalDate.now())
+            .stream()
             .map(this::toResponse)
             .toList();
     }
@@ -169,7 +179,7 @@ public class SeanceService {
     }
 
     private boolean isStagePfePeriod(String normalizedNiveau, LocalDate referenceDate) {
-        if (!"LCS3".equals(normalizedNiveau)) {
+        if (normalizedNiveau == null || !normalizedNiveau.matches("[A-Z]{3}3")) {
             return false;
         }
 
@@ -177,22 +187,64 @@ public class SeanceService {
         return isAfterJanuaryCutoff(safeDate);
     }
 
+    private boolean isStagePfeNiveauCode(String niveauCode, LocalDate referenceDate) {
+        String normalized = normalizeCode(niveauCode);
+        if (normalized == null || !normalized.matches("[A-Z]{3}3")) {
+            return false;
+        }
+        LocalDate safeDate = referenceDate != null ? referenceDate : LocalDate.now();
+        return isAfterJanuaryCutoff(safeDate);
+    }
+
+    private List<Seance> filterStagePfeSeances(List<Seance> seances, LocalDate referenceDate) {
+        if (seances == null || seances.isEmpty()) {
+            return List.of();
+        }
+        return seances.stream()
+            .filter(s -> {
+                if (s.getClasse() == null || s.getClasse().getNiveau() == null) {
+                    return true;
+                }
+                return !isStagePfeNiveauCode(s.getClasse().getNiveau().getCode(), referenceDate);
+            })
+            .toList();
+    }
+
+    private List<Seance> filterSeancesByDate(List<Seance> seances, LocalDate referenceDate) {
+        if (seances == null || seances.isEmpty()) {
+            return List.of();
+        }
+
+        LocalDate safeDate = referenceDate != null ? referenceDate : LocalDate.now();
+        if (isVacationPeriod(safeDate)) {
+            return List.of();
+        }
+
+        List<Matiere.Semestre> allowedSemestres = getAllowedSemestresByDate(safeDate);
+
+        return filterStagePfeSeances(seances, safeDate).stream()
+            .filter(s -> s.getMatiere() != null
+                && s.getMatiere().getSemestre() != null
+                && allowedSemestres.contains(s.getMatiere().getSemestre()))
+            .toList();
+    }
+
+    private List<Matiere.Semestre> getAllowedSemestresByDate(LocalDate referenceDate) {
+        LocalDate safeDate = referenceDate != null ? referenceDate : LocalDate.now();
+        if (isAfterJanuaryCutoff(safeDate)) {
+            return List.of(Matiere.Semestre.S2, Matiere.Semestre.S4);
+        }
+        return List.of(Matiere.Semestre.S1, Matiere.Semestre.S3, Matiere.Semestre.S5);
+    }
+
     private boolean isVacationPeriod(LocalDate referenceDate) {
         LocalDate safeDate = referenceDate != null ? referenceDate : LocalDate.now();
         int year = safeDate.getYear();
 
-        LocalDate janStart = LocalDate.of(year, 1, 1);
-        LocalDate janEnd = LocalDate.of(year, 1, 15);
-
-        LocalDate marStart = LocalDate.of(year, 3, 15);
-        LocalDate marEnd = LocalDate.of(year, 3, 31);
-
         LocalDate mayStart = LocalDate.of(year, 5, 30);
-        LocalDate sepEnd = LocalDate.of(year, 9, 12);
+        LocalDate sepEnd = LocalDate.of(year, 9, 11);
 
-        return isBetweenInclusive(safeDate, janStart, janEnd)
-            || isBetweenInclusive(safeDate, marStart, marEnd)
-            || isBetweenInclusive(safeDate, mayStart, sepEnd);
+        return isBetweenInclusive(safeDate, mayStart, sepEnd);
     }
 
     private boolean isBetweenInclusive(LocalDate date, LocalDate start, LocalDate end) {
