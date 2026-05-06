@@ -22,6 +22,7 @@ public class ChatService {
     private final EnseignantRepository enseignantRepository;
     private final EtudiantRepository etudiantRepository;
     private final ClasseRepository classeRepository;
+    private final SeanceRepository seanceRepository;
     private final NotificationService notificationService;
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
@@ -208,8 +209,16 @@ public class ChatService {
     // ======== GET ALL CLASSES (for enseignant groups) ========
 
     public List<ContactResponse> getAllClasses(String currentEmail) {
-        List<Classe> classes = classeRepository.findAll();
-        return classes.stream().map(c -> {
+        Enseignant enseignant = enseignantRepository.findByEmail(currentEmail).orElse(null);
+        if (enseignant == null) return List.of();
+
+        Map<Long, Classe> classesById = new LinkedHashMap<>();
+        for (Seance seance : seanceRepository.findByEnseignantId(enseignant.getId())) {
+            Classe classe = seance.getClasse();
+            if (classe != null) classesById.putIfAbsent(classe.getId(), classe);
+        }
+
+        return classesById.values().stream().map(c -> {
             List<ChatMessage> msgs = chatMessageRepository.findByClasseOrderBySentAtAsc(c);
             ChatMessage lastMsg = msgs.isEmpty() ? null : msgs.get(msgs.size() - 1);
             return ContactResponse.builder()

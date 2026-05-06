@@ -6,7 +6,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.data.domain.PageRequest;
 import java.util.*;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.YearMonth;
 
 @RestController
 @RequestMapping("/api/admin/statistiques")
@@ -61,7 +65,121 @@ public class StatistiquesController {
         stats.put("documentsEnvoyes",
             demandeDocumentRepository.countByStatut(DemandeDocument.Statut.ENVOYEE));
 
+        Map<String, Long> documentsByType = new LinkedHashMap<>();
+        for (DemandeDocument.TypeDocument type : DemandeDocument.TypeDocument.values()) {
+            documentsByType.put(type.name(), demandeDocumentRepository.countByTypeDocument(type));
+        }
+        stats.put("documentsByType", documentsByType);
+
+        stats.put("documentsAvgProcessingDays", calculateDocumentsAvgProcessingDays());
+
+        double currentMonthAvg = calculateDocumentsAvgProcessingDaysForMonth(LocalDate.now());
+        double previousMonthAvg = calculateDocumentsAvgProcessingDaysForMonth(LocalDate.now().minusMonths(1));
+        double changePercent = 0.0;
+        String trend = "stable";
+
+        if (previousMonthAvg > 0) {
+            double delta = currentMonthAvg - previousMonthAvg;
+            changePercent = Math.round(Math.abs(delta / previousMonthAvg * 1000.0)) / 10.0;
+            if (delta > 0.01) {
+                trend = "up";
+            } else if (delta < -0.01) {
+                trend = "down";
+            }
+        }
+
+        stats.put("documentsAvgProcessingChangePercent", changePercent);
+        stats.put("documentsAvgProcessingTrend", trend);
+
+        // Recettes par mois (factures payees)
+        List<Map<String, Object>> recettesParMois = new ArrayList<>();
+        for (Object[] row : factureRepository.totalPayeParMois()) {
+            Integer year = row[0] != null ? ((Number) row[0]).intValue() : null;
+            Integer month = row[1] != null ? ((Number) row[1]).intValue() : null;
+            Double total = row[2] != null ? ((Number) row[2]).doubleValue() : 0.0;
+            if (year == null || month == null) continue;
+            String label = String.format("%04d-%02d", year, month);
+            recettesParMois.add(Map.of("month", label, "total", total));
+        }
+        stats.put("recettesParMois", recettesParMois);
+
+        // Top 5 classes par absences
+        List<Map<String, Object>> topClassesAbsences = new ArrayList<>();
+        for (Object[] row : absenceRepository.findTopClassesByAbsences(PageRequest.of(0, 5))) {
+            String classeCode = row[0] != null ? row[0].toString() : "-";
+            long total = row[1] != null ? ((Number) row[1]).longValue() : 0L;
+            topClassesAbsences.add(Map.of("classeCode", classeCode, "totalAbsences", total));
+        }
+        stats.put("topClassesAbsences", topClassesAbsences);
+
         return ResponseEntity.ok(stats);
+    }
+
+    private double calculateDocumentsAvgProcessingDays() {
+        List<DemandeDocument> all = demandeDocumentRepository.findAll();
+        long totalMinutes = 0L;
+        long resolvedCount = 0L;
+
+        for (DemandeDocument doc : all) {
+            if (!isResolved(doc.getStatut())) {
+                continue;
+            }
+            if (doc.getCreatedAt() == null || doc.getUpdatedAt() == null) {
+                continue;
+            }
+            long minutes = Duration.between(doc.getCreatedAt(), doc.getUpdatedAt()).toMinutes();
+            if (minutes < 0) {
+                continue;
+            }
+            totalMinutes += minutes;
+            resolvedCount += 1;
+        }
+
+        if (resolvedCount == 0) {
+            return 0.0;
+        }
+
+        double avgDays = (totalMinutes / 60.0) / 24.0;
+        return Math.round(avgDays * 10.0) / 10.0;
+    }
+
+    private double calculateDocumentsAvgProcessingDaysForMonth(LocalDate referenceDate) {
+        YearMonth targetMonth = YearMonth.from(referenceDate);
+        List<DemandeDocument> all = demandeDocumentRepository.findAll();
+        long totalMinutes = 0L;
+        long resolvedCount = 0L;
+
+        for (DemandeDocument doc : all) {
+            if (!isResolved(doc.getStatut())) {
+                continue;
+            }
+            if (doc.getCreatedAt() == null || doc.getUpdatedAt() == null) {
+                continue;
+            }
+            YearMonth updatedMonth = YearMonth.from(doc.getUpdatedAt());
+            if (!updatedMonth.equals(targetMonth)) {
+                continue;
+            }
+            long minutes = Duration.between(doc.getCreatedAt(), doc.getUpdatedAt()).toMinutes();
+            if (minutes < 0) {
+                continue;
+            }
+            totalMinutes += minutes;
+            resolvedCount += 1;
+        }
+
+        if (resolvedCount == 0) {
+            return 0.0;
+        }
+
+        double avgDays = (totalMinutes / 60.0) / 24.0;
+        return Math.round(avgDays * 10.0) / 10.0;
+    }
+
+    private boolean isResolved(DemandeDocument.Statut statut) {
+        return statut == DemandeDocument.Statut.VALIDEE
+            || statut == DemandeDocument.Statut.REJETEE
+            || statut == DemandeDocument.Statut.ENVOYEE;
     }
 
     // ─── STATS ÉTUDIANTS ──────────────────────────────────

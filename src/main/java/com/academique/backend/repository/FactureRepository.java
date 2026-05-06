@@ -21,4 +21,13 @@ public interface FactureRepository extends JpaRepository<Facture, Long> {
 
     @Query("SELECT SUM(f.montant) FROM Facture f WHERE f.statut = 'NON_PAYEE'")
     Double totalImpaye();
+
+    @Query("""
+        SELECT EXTRACT(YEAR FROM f.datePaiement), EXTRACT(MONTH FROM f.datePaiement), SUM(f.montant)
+        FROM Facture f
+        WHERE f.statut = 'PAYEE' AND f.datePaiement IS NOT NULL
+        GROUP BY EXTRACT(YEAR FROM f.datePaiement), EXTRACT(MONTH FROM f.datePaiement)
+        ORDER BY EXTRACT(YEAR FROM f.datePaiement), EXTRACT(MONTH FROM f.datePaiement)
+        """)
+    List<Object[]> totalPayeParMois();
 }

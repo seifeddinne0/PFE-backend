@@ -30,4 +30,14 @@ public interface AbsenceRepository extends JpaRepository<Absence, Long> {
     
     @Query("SELECT a FROM Absence a WHERE a.etudiant.id = :etudiantId AND a.matiere.id = :matiereId")
     List<Absence> findByEtudiantIdAndMatiereId(@Param("etudiantId") Long etudiantId, @Param("matiereId") Long matiereId);
+
+    @Query("""
+        SELECT c.code, COUNT(a)
+        FROM Absence a
+        JOIN a.etudiant e
+        JOIN e.classe c
+        GROUP BY c.code
+        ORDER BY COUNT(a) DESC
+        """)
+    List<Object[]> findTopClassesByAbsences(Pageable pageable);
 }
