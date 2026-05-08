@@ -67,6 +67,45 @@ public class SeanceController {
         return ResponseEntity.ok("Séance supprimée avec succès");
     }
 
+    @PatchMapping("/admin/seances/assign-enseignant")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Integer>> assignEnseignant(@Valid @RequestBody com.academique.backend.dto.request.AssignEnseignantRequest request) {
+        return ResponseEntity.ok(seanceService.assignEnseignant(
+            request.getMatiereId(),
+            request.getSemestre(),
+            request.getEnseignantId()
+        ));
+    }
+
+    @GetMapping("/seances")
+    @PreAuthorize("hasAnyRole('ADMIN', 'ENSEIGNANT', 'ETUDIANT')")
+    public ResponseEntity<List<SeanceResponse>> getFiltered(
+        @RequestParam(required = false) String semestre,
+        @RequestParam(required = false) Long niveau_id,
+        @RequestParam(required = false) Long classe_id,
+        @RequestParam(required = false) Long enseignant_id
+    ) {
+        List<SeanceResponse> all = seanceService.getAll();
+        return ResponseEntity.ok(all.stream().filter(s -> 
+            (semestre == null || semestre.equals(s.getSemestre())) &&
+            (niveau_id == null || niveau_id.equals(s.getNiveauId())) &&
+            (classe_id == null || classe_id.equals(s.getClasseId())) &&
+            (enseignant_id == null || enseignant_id.equals(s.getEnseignantId()))
+        ).collect(Collectors.toList()));
+    }
+
+    @GetMapping("/vue-conflits")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<Map<String, Object>>> getConflits() {
+        return ResponseEntity.ok(seanceService.getConflits());
+    }
+
+    @GetMapping("/charge-enseignant")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<List<Map<String, Object>>> getChargeEnseignants() {
+        return ResponseEntity.ok(seanceService.getChargeEnseignants());
+    }
+
     // ─── Enseignant: get my séances ─────────────────────────
 
     @GetMapping("/enseignant/seances")
@@ -90,7 +129,10 @@ public class SeanceController {
             return ResponseEntity.ok(List.of());
         }
 
-        List<Seance> seances = seanceRepository.findByClasseId(etudiant.getClasse().getId());
+        List<Seance> seances = seanceRepository.findForClasseAndNiveau(
+            etudiant.getClasse().getId(),
+            etudiant.getClasse().getNiveau().getId()
+        );
         Map<Long, Map<String, Object>> uniqueTeachers = new LinkedHashMap<>();
 
         for (Seance seance : seances) {
@@ -111,11 +153,14 @@ public class SeanceController {
 
     @GetMapping("/etudiant/seances")
     @PreAuthorize("hasRole('ETUDIANT')")
-    public ResponseEntity<List<SeanceResponse>> mesSeancesEtudiant(Authentication authentication) {
+    public ResponseEntity<List<SeanceResponse>> mesSeancesEtudiant(
+        Authentication authentication,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate referenceDate
+    ) {
         Etudiant etudiant = etudiantRepository.findByEmail(authentication.getName())
             .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
         if (etudiant.getClasse() == null) return ResponseEntity.ok(List.of());
-        return ResponseEntity.ok(seanceService.getByClasseId(etudiant.getClasse().getId()));
+        return ResponseEntity.ok(seanceService.getByClasseId(etudiant.getClasse().getId(), referenceDate));
     }
 
     @GetMapping("/enseignant/agenda-absences")
@@ -144,7 +189,18 @@ public class SeanceController {
         Seance seance = seanceRepository.findById(seanceId)
             .orElseThrow(() -> new ResourceNotFoundException("Séance non trouvée"));
 
-        List<Etudiant> etudiants = etudiantRepository.findByClasseId(seance.getClasse().getId());
+        List<Etudiant> etudiants;
+        if (seance.getClasse() != null) {
+            etudiants = etudiantRepository.findByClasseId(seance.getClasse().getId());
+        } else if (seance.getNiveau() != null) {
+            List<Long> classeIds = classeRepository.findByNiveauId(seance.getNiveau().getId())
+                .stream()
+                .map(Classe::getId)
+                .toList();
+            etudiants = classeIds.isEmpty() ? List.of() : etudiantRepository.findByClasseIdIn(classeIds);
+        } else {
+            etudiants = List.of();
+        }
 
         List<EtudiantResponse> responses = etudiants.stream().map(e ->
             EtudiantResponse.builder()

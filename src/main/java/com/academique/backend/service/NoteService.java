@@ -402,8 +402,7 @@ public class NoteService {
                 Double exam = acc.examCount > 0 ? acc.examSum / acc.examCount : null;
 
                 double moyenne = (exam == null ? 0.0 : exam * 0.7)
-                    + (ds == null ? 0.0 : ds * 0.15)
-                    + (tp == null ? 0.0 : tp * 0.15);
+                    + (ds == null ? 0.0 : ds * 0.3);
 
                 double moyenneRounded = Math.round(moyenne * 100.0) / 100.0;
                 return new MatiereBulletinRow(acc.matiereNom, acc.coefficient, ds, tp, exam, moyenneRounded, acc.semestre);

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -23,14 +24,38 @@ public class SeanceService {
     private final MatiereRepository matiereRepository;
     private final ClasseRepository classeRepository;
     private final EnseignantRepository enseignantRepository;
+    private final NiveauRepository niveauRepository;
+    private final CreneauRepository creneauRepository;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
 
     public SeanceResponse create(SeanceRequest request) {
         Matiere matiere = matiereRepository.findById(request.getMatiereId())
             .orElseThrow(() -> new ResourceNotFoundException("Matière non trouvée"));
-        Classe classe = classeRepository.findById(request.getClasseId())
-            .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
-        Enseignant enseignant = enseignantRepository.findById(request.getEnseignantId())
-            .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+        Classe classe = null;
+        if (request.getClasseId() != null) {
+            classe = classeRepository.findById(request.getClasseId())
+                .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
+        }
+        Enseignant enseignant = null;
+        if (request.getEnseignantId() != null) {
+            enseignant = enseignantRepository.findById(request.getEnseignantId())
+                .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+        }
+        Niveau niveau = niveauRepository.findById(request.getNiveauId())
+            .orElseThrow(() -> new ResourceNotFoundException("Niveau non trouvé"));
+        Creneau creneau = creneauRepository.findById(request.getCreneauId().intValue())
+            .orElseThrow(() -> new ResourceNotFoundException("Créneau non trouvé"));
+
+        Seance.TypeSeance typeSeance = Seance.TypeSeance.valueOf(request.getTypeSeance());
+        Matiere.Semestre semestre = Matiere.Semestre.valueOf(request.getSemestre());
+
+        if (typeSeance == Seance.TypeSeance.COURS && classe != null) {
+            throw new IllegalArgumentException("Une séance COURS ne doit pas avoir de classe");
+        }
+
+        if (typeSeance == Seance.TypeSeance.TD && classe == null) {
+            throw new IllegalArgumentException("Une séance TD doit avoir une classe");
+        }
 
         Seance seance = Seance.builder()
             .jourSemaine(Seance.JourSemaine.valueOf(request.getJourSemaine()))
@@ -39,6 +64,10 @@ public class SeanceService {
             .matiere(matiere)
             .classe(classe)
             .enseignant(enseignant)
+            .niveau(niveau)
+            .typeSeance(typeSeance)
+            .semestre(semestre)
+            .creneau(creneau)
             .salle(request.getSalle())
             .build();
 
@@ -73,7 +102,14 @@ public class SeanceService {
     }
 
     public List<SeanceResponse> getByClasseId(Long classeId) {
-        return filterSeancesByDate(seanceRepository.findByClasseId(classeId), LocalDate.now())
+        return getByClasseId(classeId, LocalDate.now());
+    }
+
+    public List<SeanceResponse> getByClasseId(Long classeId, LocalDate referenceDate) {
+        Classe classe = classeRepository.findById(classeId)
+            .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
+        Long niveauId = classe.getNiveau().getId();
+        return filterSeancesByDate(seanceRepository.findForClasseAndNiveau(classeId, niveauId), referenceDate)
             .stream()
             .map(this::toResponse)
             .toList();
@@ -202,10 +238,14 @@ public class SeanceService {
         }
         return seances.stream()
             .filter(s -> {
-                if (s.getClasse() == null || s.getClasse().getNiveau() == null) {
+                Niveau niveau = s.getNiveau();
+                if (niveau == null && s.getClasse() != null) {
+                    niveau = s.getClasse().getNiveau();
+                }
+                if (niveau == null) {
                     return true;
                 }
-                return !isStagePfeNiveauCode(s.getClasse().getNiveau().getCode(), referenceDate);
+                return !isStagePfeNiveauCode(niveau.getCode(), referenceDate);
             })
             .toList();
     }
@@ -223,9 +263,13 @@ public class SeanceService {
         List<Matiere.Semestre> allowedSemestres = getAllowedSemestresByDate(safeDate);
 
         return filterStagePfeSeances(seances, safeDate).stream()
-            .filter(s -> s.getMatiere() != null
-                && s.getMatiere().getSemestre() != null
-                && allowedSemestres.contains(s.getMatiere().getSemestre()))
+            .filter(s -> {
+                Matiere.Semestre semestre = s.getSemestre();
+                if (semestre == null && s.getMatiere() != null) {
+                    semestre = s.getMatiere().getSemestre();
+                }
+                return semestre != null && allowedSemestres.contains(semestre);
+            })
             .toList();
     }
 
@@ -275,22 +319,47 @@ public class SeanceService {
         seanceRepository.deleteById(id);
     }
 
+    @org.springframework.transaction.annotation.Transactional
+    public Map<String, Integer> assignEnseignant(Long matiereId, String semestre, Long enseignantId) {
+        Matiere.Semestre sem = Matiere.Semestre.valueOf(semestre);
+        Enseignant enseignant = enseignantRepository.findById(enseignantId)
+            .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+        int updated = seanceRepository.assignEnseignant(matiereId, sem, enseignant);
+        return java.util.Map.of("updated", updated);
+    }
+
+    public List<Map<String, Object>> getConflits() {
+        return jdbcTemplate.queryForList("SELECT * FROM vue_conflits");
+    }
+
+    public List<Map<String, Object>> getChargeEnseignants() {
+        return jdbcTemplate.queryForList("SELECT * FROM vue_charge_enseignant");
+    }
+
     private SeanceResponse toResponse(Seance s) {
+        Classe classe = s.getClasse();
+        Niveau niveau = s.getNiveau();
+        Creneau creneau = s.getCreneau();
         return SeanceResponse.builder()
             .id(s.getId())
             .jourSemaine(s.getJourSemaine().name())
             .heureDebut(s.getHeureDebut())
             .heureFin(s.getHeureFin())
             .salle(s.getSalle())
+            .typeSeance(s.getTypeSeance() != null ? s.getTypeSeance().name() : null)
+            .semestre(s.getSemestre() != null ? s.getSemestre().name() : null)
+            .niveauId(niveau != null ? niveau.getId() : null)
+            .niveauCode(niveau != null ? niveau.getCode() : null)
+            .creneauId(creneau != null && creneau.getId() != null ? creneau.getId().longValue() : null)
+            .creneauLabel(creneau != null ? creneau.getLabel() : null)
             .matiereId(s.getMatiere().getId())
             .matiereNom(s.getMatiere().getNom())
             .matiereCode(s.getMatiere().getCode())
-            .semestre(s.getMatiere().getSemestre() != null ? s.getMatiere().getSemestre().name() : null)
-            .classeId(s.getClasse().getId())
-            .classeCode(s.getClasse().getCode())
-            .classeNom(s.getClasse().getNom())
-            .enseignantId(s.getEnseignant().getId())
-            .enseignantNom(s.getEnseignant().getNom() + " " + s.getEnseignant().getPrenom())
+            .classeId(classe != null ? classe.getId() : null)
+            .classeCode(classe != null ? classe.getCode() : null)
+            .classeNom(classe != null ? classe.getNom() : null)
+            .enseignantId(s.getEnseignant() != null ? s.getEnseignant().getId() : null)
+            .enseignantNom(s.getEnseignant() != null ? s.getEnseignant().getNom() + " " + s.getEnseignant().getPrenom() : null)
             .build();
     }
 

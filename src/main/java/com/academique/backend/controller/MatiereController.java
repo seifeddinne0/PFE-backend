@@ -66,4 +66,12 @@ public class MatiereController {
         matiereService.delete(id);
         return ResponseEntity.ok("Matière supprimée avec succès");
     }
+
+    @PatchMapping("/admin/matieres/{id}/enseignant")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<MatiereResponse> updateEnseignant(
+            @PathVariable Long id,
+            @RequestParam Long enseignantId) {
+        return ResponseEntity.ok(matiereService.updateEnseignant(id, enseignantId));
+    }
 }

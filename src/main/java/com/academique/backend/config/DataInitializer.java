@@ -200,6 +200,65 @@ public class DataInitializer {
                 System.out.println("✅ Seances reaffectees aux bonnes classes: " + seancesToPatch.size());
             }
 
+            // --- NOUVEAU: Fix internal overlaps SAFELY ---
+            System.out.println("🔍 Resolution sécurisée des conflits internes...");
+            List<Seance> allSeances = seanceRepository.findAll();
+            boolean overlapsFixed = false;
+            
+            for (Matiere m : matiereRepository.findAll()) {
+                List<Seance> matiereSeances = allSeances.stream()
+                    .filter(s -> s.getMatiere() != null && s.getMatiere().getId().equals(m.getId()))
+                    .toList();
+                
+                Set<String> occupiedByMatiere = new java.util.HashSet<>();
+                for (Seance s : matiereSeances) {
+                    if (s.getCreneau() == null || s.getJourSemaine() == null) continue;
+                    String slotKey = s.getJourSemaine() + "-" + s.getCreneau().getId();
+                    
+                    if (occupiedByMatiere.contains(slotKey)) {
+                        System.out.println("⚠️ Conflit interne detecte pour " + m.getNom());
+                        
+                        // Find a safe slot
+                        boolean found = false;
+                        for (Seance.JourSemaine jour : Seance.JourSemaine.values()) {
+                            if (found) break;
+                            for (int cId = 1; cId <= 5; cId++) {
+                                String testKey = jour + "-" + cId;
+                                
+                                // Rule 1: The Matiere must not already have a session here
+                                if (occupiedByMatiere.contains(testKey)) continue;
+                                
+                                // Rule 2: The Classe must not have any other session here
+                                final int testCId = cId;
+                                boolean classeBusy = allSeances.stream().anyMatch(other -> 
+                                    other.getClasse() != null && s.getClasse() != null &&
+                                    other.getClasse().getId().equals(s.getClasse().getId()) &&
+                                    other.getJourSemaine() == jour &&
+                                    other.getCreneau() != null && other.getCreneau().getId().equals(testCId) &&
+                                    !other.getId().equals(s.getId())
+                                );
+                                
+                                if (!classeBusy) {
+                                    s.setJourSemaine(jour);
+                                    s.setCreneau(com.academique.backend.entity.Creneau.builder().id(testCId).build());
+                                    seanceRepository.save(s);
+                                    occupiedByMatiere.add(testKey);
+                                    System.out.println("   -> Decale vers " + testKey);
+                                    overlapsFixed = true;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        occupiedByMatiere.add(slotKey);
+                    }
+                }
+            }
+            if (overlapsFixed) {
+                System.out.println("✅ Conflits internes resolus sécurisément !");
+            }
+
             // 4. Rattachement des Matières aux Niveaux (Groupement hiérarchique)
             System.out.println("🔍 Scan des matières pour rattachement hiérarchique...");
             List<Matiere> allMatieres = matiereRepository.findAll();

@@ -67,6 +67,25 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
     }
 
+    // 409 — Conflict (Database constraints)
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, Object>> handleDataIntegrityViolation(
+            org.springframework.dao.DataIntegrityViolationException ex) {
+        String message = ex.getMostSpecificCause().getMessage();
+        if (message != null) {
+            if (message.contains("uq_enseignant_slot")) {
+                return buildResponse(HttpStatus.CONFLICT, "L'enseignant est déjà occupé à ce créneau", null);
+            } else if (message.contains("uq_classe_td_slot")) {
+                return buildResponse(HttpStatus.CONFLICT, "La classe a déjà une séance à ce créneau", null);
+            } else if (message.contains("uq_niveau_cours_slot")) {
+                return buildResponse(HttpStatus.CONFLICT, "Ce niveau a déjà un cours à ce créneau", null);
+            } else if (message.contains("chk_l3_semestre_only")) {
+                return buildResponse(HttpStatus.CONFLICT, "Les séances pour le niveau 3 (L3) doivent être uniquement en S5", null);
+            }
+        }
+        return buildResponse(HttpStatus.CONFLICT, "Conflit ou contrainte de base de données violée", null);
+    }
+
     // 500 — Generic error
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {

@@ -31,16 +31,36 @@ public class Seance {
     private Matiere matiere;
 
     @ManyToOne
-    @JoinColumn(name = "classe_id", nullable = false)
+    @JoinColumn(name = "classe_id")
     private Classe classe;
 
     @ManyToOne
-    @JoinColumn(name = "enseignant_id", nullable = false)
+    @JoinColumn(name = "niveau_id", nullable = false)
+    private Niveau niveau;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type_seance", nullable = false)
+    private TypeSeance typeSeance;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Matiere.Semestre semestre;
+
+    @ManyToOne
+    @JoinColumn(name = "creneau_id", nullable = false)
+    private Creneau creneau;
+
+    @ManyToOne
+    @JoinColumn(name = "enseignant_id")
     private Enseignant enseignant;
 
     private String salle; // e.g., "Amphi A", "Salle 201"
 
     public enum JourSemaine {
         LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI
+    }
+
+    public enum TypeSeance {
+        COURS, TD
     }
 }

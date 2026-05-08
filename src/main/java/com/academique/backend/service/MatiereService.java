@@ -9,6 +9,8 @@ import com.academique.backend.exception.ResourceNotFoundException;
 import com.academique.backend.repository.EnseignantRepository;
 import com.academique.backend.repository.MatiereRepository;
 import com.academique.backend.repository.NiveauRepository;
+import com.academique.backend.repository.SeanceRepository;
+import com.academique.backend.entity.Seance;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +25,7 @@ public class MatiereService {
     private final MatiereRepository matiereRepository;
     private final EnseignantRepository enseignantRepository;
     private final NiveauRepository niveauRepository;
+    private final SeanceRepository seanceRepository;
 
     public MatiereResponse create(MatiereRequest request) {
         if (matiereRepository.existsByNom(request.getNom())) {
@@ -74,13 +77,21 @@ public class MatiereService {
         matiere.setCoefficient(request.getCoefficient());
         matiere.setSemestre(Matiere.Semestre.valueOf(request.getSemestre()));
 
+        Enseignant e = null;
         if (request.getEnseignantId() != null) {
-            Enseignant e = enseignantRepository.findById(request.getEnseignantId())
+            e = enseignantRepository.findById(request.getEnseignantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
             matiere.setEnseignant(e);
         } else {
             matiere.setEnseignant(null);
         }
+        
+        // Sync seances
+        List<Seance> seances = seanceRepository.findByMatiereId(matiere.getId());
+        for (Seance s : seances) {
+            s.setEnseignant(e);
+        }
+        seanceRepository.saveAll(seances);
         
         if (request.getNiveauId() != null) {
             Niveau n = niveauRepository.findById(request.getNiveauId())
@@ -108,6 +119,13 @@ public class MatiereService {
         List<Matiere> oldMatieres = matiereRepository.findByEnseignant(enseignant);
         for (Matiere m : oldMatieres) {
             m.setEnseignant(null);
+            List<Seance> seances = seanceRepository.findByMatiereId(m.getId());
+            for (Seance s : seances) {
+                if (s.getEnseignant() != null && s.getEnseignant().getId().equals(enseignantId)) {
+                    s.setEnseignant(null);
+                }
+            }
+            seanceRepository.saveAll(seances);
         }
         matiereRepository.saveAll(oldMatieres);
 
@@ -116,6 +134,11 @@ public class MatiereService {
             List<Matiere> newMatieres = matiereRepository.findAllById(matiereIds);
             for (Matiere m : newMatieres) {
                 m.setEnseignant(enseignant);
+                List<Seance> seances = seanceRepository.findByMatiereId(m.getId());
+                for (Seance s : seances) {
+                    s.setEnseignant(enseignant);
+                }
+                seanceRepository.saveAll(seances);
             }
             matiereRepository.saveAll(newMatieres);
         }
@@ -142,5 +165,25 @@ public class MatiereService {
             .filiereNom(m.getNiveau() != null && m.getNiveau().getFiliere() != null ? m.getNiveau().getFiliere().getNom() : null)
             .filiereCode(m.getNiveau() != null && m.getNiveau().getFiliere() != null ? m.getNiveau().getFiliere().getCode() : null)
             .build();
+    }
+
+    public MatiereResponse updateEnseignant(Long id, Long enseignantId) {
+        Matiere matiere = matiereRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Matière non trouvée"));
+        
+        Enseignant e = enseignantRepository.findById(enseignantId)
+            .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+        
+        matiere.setEnseignant(e);
+        matiereRepository.save(matiere);
+
+        // Sync seances
+        List<Seance> seances = seanceRepository.findByMatiereId(id);
+        for (Seance s : seances) {
+            s.setEnseignant(e);
+        }
+        seanceRepository.saveAll(seances);
+
+        return toResponse(matiere);
     }
 }

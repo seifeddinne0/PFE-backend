@@ -16,12 +16,17 @@ public class SeanceResponse {
     private LocalTime heureDebut;
     private LocalTime heureFin;
     private String salle;
+    private String typeSeance;
+    private String semestre;
+    private Long niveauId;
+    private String niveauCode;
+    private Long creneauId;
+    private String creneauLabel;
 
     // Matière info
     private Long matiereId;
     private String matiereNom;
     private String matiereCode;
-    private String semestre;
 
     // Classe info
     private Long classeId;
