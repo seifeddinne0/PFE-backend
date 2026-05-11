@@ -170,10 +170,23 @@ public class DataInitializer {
                 System.out.println("✅ Etudiants rattaches a leurs classes: " + toPatch.size());
             }
 
-            // Corrige les séances incohérentes: niveau de classe aligné sur le semestre matière
-            // S1/S2 -> LCS1, S3/S4 -> LCS2, S5 -> LCS3 (en conservant la section A/B/C/D)
-            List<Seance> seancesToPatch = new ArrayList<>();
-            for (Seance seance : seanceRepository.findAll()) {
+            // Corrige les séances incohérentes et résout les conflits de contraintes (ex: uq_classe_td_slot)
+            List<Seance> allSeances = seanceRepository.findAll();
+            boolean needSeanceUpdate = false;
+
+            // Drop constraint temporarily to allow shifting schedules around
+            try {
+                jdbcTemplate.execute("ALTER TABLE seances DROP CONSTRAINT IF EXISTS uq_classe_td_slot");
+                jdbcTemplate.execute("DROP INDEX IF EXISTS uq_classe_td_slot");
+                jdbcTemplate.execute("ALTER TABLE seances DROP CONSTRAINT IF EXISTS uq_enseignant_slot");
+                jdbcTemplate.execute("DROP INDEX IF EXISTS uq_enseignant_slot");
+                System.out.println("✅ Constraint/Index 'uq_classe_td_slot' and 'uq_enseignant_slot' dropped temporarily.");
+            } catch (Exception e) {
+                System.err.println("⚠️ Could not drop constraint/index: " + e.getMessage());
+            }
+
+            // 1) Patch Classes
+            for (Seance seance : allSeances) {
                 if (seance.getMatiere() == null || seance.getClasse() == null) {
                     continue;
                 }
@@ -185,78 +198,108 @@ public class DataInitializer {
                 }
 
                 String targetClasseCode = targetNiveauPrefix + section;
-                if (targetClasseCode.equalsIgnoreCase(seance.getClasse().getCode())) {
+                if (!targetClasseCode.equalsIgnoreCase(seance.getClasse().getCode())) {
+                    classeRepository.findByCode(targetClasseCode).ifPresent(targetClasse -> {
+                        seance.setClasse(targetClasse);
+                    });
+                    needSeanceUpdate = true;
+                }
+            }
+
+            // 2) Résolution des conflits pour éviter les violations de contraintes (classe_id, jour_semaine, creneau_id, semestre)
+            System.out.println("🔍 Resolution sécurisée des conflits internes...");
+            Set<String> occupiedClasseSlots = new java.util.HashSet<>();
+            Set<String> occupiedProfSlots = new java.util.HashSet<>();
+            List<Seance> seancesToSave = new ArrayList<>();
+
+            for (Seance s : allSeances) {
+                if (s.getClasse() == null || s.getJourSemaine() == null || s.getCreneau() == null || s.getSemestre() == null) {
                     continue;
                 }
 
-                classeRepository.findByCode(targetClasseCode).ifPresent(targetClasse -> {
-                    seance.setClasse(targetClasse);
-                    seancesToPatch.add(seance);
-                });
-            }
+                boolean resolved = false;
 
-            if (!seancesToPatch.isEmpty()) {
-                seanceRepository.saveAll(seancesToPatch);
-                System.out.println("✅ Seances reaffectees aux bonnes classes: " + seancesToPatch.size());
-            }
+                while (!resolved) {
+                    String classeSlot = s.getClasse().getId() + "-" + s.getJourSemaine() + "-" + s.getCreneau().getId() + "-" + s.getSemestre();
+                    String profSlot = (s.getEnseignant() != null) ? s.getEnseignant().getId() + "-" + s.getJourSemaine() + "-" + s.getCreneau().getId() + "-" + s.getSemestre() : null;
 
-            // --- NOUVEAU: Fix internal overlaps SAFELY ---
-            System.out.println("🔍 Resolution sécurisée des conflits internes...");
-            List<Seance> allSeances = seanceRepository.findAll();
-            boolean overlapsFixed = false;
-            
-            for (Matiere m : matiereRepository.findAll()) {
-                List<Seance> matiereSeances = allSeances.stream()
-                    .filter(s -> s.getMatiere() != null && s.getMatiere().getId().equals(m.getId()))
-                    .toList();
-                
-                Set<String> occupiedByMatiere = new java.util.HashSet<>();
-                for (Seance s : matiereSeances) {
-                    if (s.getCreneau() == null || s.getJourSemaine() == null) continue;
-                    String slotKey = s.getJourSemaine() + "-" + s.getCreneau().getId();
-                    
-                    if (occupiedByMatiere.contains(slotKey)) {
-                        System.out.println("⚠️ Conflit interne detecte pour " + m.getNom());
-                        
-                        // Find a safe slot
+                    if (occupiedClasseSlots.contains(classeSlot) || (profSlot != null && occupiedProfSlots.contains(profSlot))) {
+                        // Conflit détecté, on cherche un créneau libre
                         boolean found = false;
                         for (Seance.JourSemaine jour : Seance.JourSemaine.values()) {
                             if (found) break;
                             for (int cId = 1; cId <= 5; cId++) {
-                                String testKey = jour + "-" + cId;
-                                
-                                // Rule 1: The Matiere must not already have a session here
-                                if (occupiedByMatiere.contains(testKey)) continue;
-                                
-                                // Rule 2: The Classe must not have any other session here
-                                final int testCId = cId;
-                                boolean classeBusy = allSeances.stream().anyMatch(other -> 
-                                    other.getClasse() != null && s.getClasse() != null &&
-                                    other.getClasse().getId().equals(s.getClasse().getId()) &&
-                                    other.getJourSemaine() == jour &&
-                                    other.getCreneau() != null && other.getCreneau().getId().equals(testCId) &&
-                                    !other.getId().equals(s.getId())
-                                );
-                                
-                                if (!classeBusy) {
+                                String testClasseSlot = s.getClasse().getId() + "-" + jour + "-" + cId + "-" + s.getSemestre();
+                                String testProfSlot = (s.getEnseignant() != null) ? s.getEnseignant().getId() + "-" + jour + "-" + cId + "-" + s.getSemestre() : null;
+
+                                if (!occupiedClasseSlots.contains(testClasseSlot) && (testProfSlot == null || !occupiedProfSlots.contains(testProfSlot))) {
                                     s.setJourSemaine(jour);
-                                    s.setCreneau(com.academique.backend.entity.Creneau.builder().id(testCId).build());
-                                    seanceRepository.save(s);
-                                    occupiedByMatiere.add(testKey);
-                                    System.out.println("   -> Decale vers " + testKey);
-                                    overlapsFixed = true;
+                                    s.setCreneau(com.academique.backend.entity.Creneau.builder().id(cId).build());
+                                    
+                                    if (cId == 1) { s.setHeureDebut(java.time.LocalTime.of(8, 30)); s.setHeureFin(java.time.LocalTime.of(10, 0)); }
+                                    else if (cId == 2) { s.setHeureDebut(java.time.LocalTime.of(10, 10)); s.setHeureFin(java.time.LocalTime.of(11, 40)); }
+                                    else if (cId == 3) { s.setHeureDebut(java.time.LocalTime.of(11, 50)); s.setHeureFin(java.time.LocalTime.of(13, 20)); }
+                                    else if (cId == 4) { s.setHeureDebut(java.time.LocalTime.of(14, 0)); s.setHeureFin(java.time.LocalTime.of(15, 30)); }
+                                    else if (cId == 5) { s.setHeureDebut(java.time.LocalTime.of(15, 40)); s.setHeureFin(java.time.LocalTime.of(17, 10)); }
+                                    else if (cId == 6) { s.setHeureDebut(java.time.LocalTime.of(17, 20)); s.setHeureFin(java.time.LocalTime.of(18, 50)); }
+
                                     found = true;
+                                    needSeanceUpdate = true;
                                     break;
                                 }
                             }
                         }
+                        if (!found) {
+                            resolved = true; // Pas de créneau trouvé, on arrête pour cette séance
+                        }
                     } else {
-                        occupiedByMatiere.add(slotKey);
+                        occupiedClasseSlots.add(classeSlot);
+                        if (profSlot != null) occupiedProfSlots.add(profSlot);
+                        seancesToSave.add(s);
+                        resolved = true;
                     }
                 }
             }
-            if (overlapsFixed) {
-                System.out.println("✅ Conflits internes resolus sécurisément !");
+
+            if (needSeanceUpdate) {
+                seanceRepository.saveAll(seancesToSave);
+                System.out.println("✅ Seances mises a jour et conflits resolus sécurisément ! (" + seancesToSave.size() + ")");
+            }
+
+            // 3) Synchronize heureDebut and heureFin with creneau to fix calendar rendering issues
+            System.out.println("🔍 Synchronisation des heures des séances avec leurs créneaux...");
+            boolean needTimeSync = false;
+            for (Seance s : allSeances) {
+                if (s.getCreneau() != null && s.getCreneau().getId() != null) {
+                    java.time.LocalTime expectedDebut = null;
+                    java.time.LocalTime expectedFin = null;
+                    int cId = s.getCreneau().getId();
+                    if (cId == 1) { expectedDebut = java.time.LocalTime.of(8, 30); expectedFin = java.time.LocalTime.of(10, 0); }
+                    else if (cId == 2) { expectedDebut = java.time.LocalTime.of(10, 10); expectedFin = java.time.LocalTime.of(11, 40); }
+                    else if (cId == 3) { expectedDebut = java.time.LocalTime.of(11, 50); expectedFin = java.time.LocalTime.of(13, 20); }
+                    else if (cId == 4) { expectedDebut = java.time.LocalTime.of(14, 0); expectedFin = java.time.LocalTime.of(15, 30); }
+                    else if (cId == 5) { expectedDebut = java.time.LocalTime.of(15, 40); expectedFin = java.time.LocalTime.of(17, 10); }
+                    else if (cId == 6) { expectedDebut = java.time.LocalTime.of(17, 20); expectedFin = java.time.LocalTime.of(18, 50); }
+                    
+                    if (expectedDebut != null && (!expectedDebut.equals(s.getHeureDebut()) || !expectedFin.equals(s.getHeureFin()))) {
+                        s.setHeureDebut(expectedDebut);
+                        s.setHeureFin(expectedFin);
+                        needTimeSync = true;
+                    }
+                }
+            }
+            if (needTimeSync) {
+                seanceRepository.saveAll(allSeances);
+                System.out.println("✅ Synchronisation des heures terminée.");
+            }
+
+            // Restore constraint
+            try {
+                jdbcTemplate.execute("ALTER TABLE seances ADD CONSTRAINT uq_classe_td_slot UNIQUE (classe_id, jour_semaine, creneau_id, semestre)");
+                jdbcTemplate.execute("ALTER TABLE seances ADD CONSTRAINT uq_enseignant_slot UNIQUE (enseignant_id, jour_semaine, creneau_id, semestre)");
+                System.out.println("✅ Constraints 'uq_classe_td_slot' and 'uq_enseignant_slot' restored.");
+            } catch (Exception e) {
+                System.err.println("⚠️ Could not restore constraint (might already exist or still have conflicts): " + e.getMessage());
             }
 
             // 4. Rattachement des Matières aux Niveaux (Groupement hiérarchique)
