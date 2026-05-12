@@ -11,10 +11,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -25,12 +29,21 @@ public class DemandeDocumentService {
 
     private final DemandeDocumentRepository demandeRepository;
     private final EtudiantRepository etudiantRepository;
+    private final NoteRepository noteRepository;
     private final EnseignantRepository enseignantRepository;
     private final ValidationEnseignantRepository validationRepository;
     private final NotificationService notificationService;
 
     private static final DateTimeFormatter DATE_FORMAT =
         DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final DateTimeFormatter DATE_TIME_FORMAT =
+        DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+    private static final float DOC_MARGIN_LEFT = 50f;
+    private static final float DOC_MARGIN_RIGHT = 50f;
+    private static final float DOC_MARGIN_TOP = 70f;
+    private static final float DOC_MARGIN_BOTTOM = 50f;
+    private static final float BODY_FONT_SIZE = 11f;
 
     // ─── ÉTUDIANT CRÉE UNE DEMANDE ────────────────────────
     public DemandeDocumentResponse create(DemandeDocumentRequest request, String etudiantEmail) {
@@ -225,6 +238,7 @@ public class DemandeDocumentService {
     }
 
     // ─── GÉNÉRATION PDF ───────────────────────────────────
+    @Transactional(readOnly = true)
     public byte[] genererPdf(Long id) {
         DemandeDocument demande = demandeRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("Demande non trouvée"));
@@ -252,30 +266,30 @@ public class DemandeDocumentService {
     private byte[] genererAttestationPresence(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "ATTESTATION DE PRÉSENCE");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Je soussigné(e), le Directeur de l'établissement, atteste que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n", bodyFont));
-            p.add(new Chunk("Date de naissance : ", boldFont));
-            p.add(new Chunk((e.getDateNaissance() != null ? e.getDateNaissance().toString() : "-") + "\n\n", bodyFont));
-            p.add(new Chunk("est régulièrement inscrit(e) et présent(e) au sein de notre établissement ", bodyFont));
-            p.add(new Chunk("pour l'année académique en cours.\n\n", bodyFont));
-            p.add(new Chunk("Cette attestation est délivrée à l'intéressé(e) pour servir et valoir ce que de droit.\n", bodyFont));
             doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("est régulièrement inscrit(e) et présent(e) au sein de notre établissement ", bodyFont));
+            p2.add(new Chunk("pour l'année académique en cours.\n\n", bodyFont));
+            p2.add(new Chunk("Cette attestation est délivrée à l'intéressé(e) pour servir et valoir ce que de droit.\n", bodyFont));
+            doc.add(p2);
 
             addValidateursSignatures(doc, d);
             addSignatureAdmin(doc, date);
@@ -289,27 +303,114 @@ public class DemandeDocumentService {
     private byte[] genererReleveNotes(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "RELEVÉ DE NOTES");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Le présent relevé de notes est établi pour l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("Ce document officiel certifie les résultats académiques ", bodyFont));
-            p.add(new Chunk("obtenus au cours de l'année universitaire en cours.\n", bodyFont));
             doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            List<Note> notes = noteRepository.findByEtudiantId(e.getId());
+            List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+            Map<Note.Semestre, List<MatiereBulletinRow>> rowsBySemestre = groupRowsBySemestre(rows);
+
+            if (rowsBySemestre.isEmpty()) {
+                Paragraph empty = new Paragraph("Aucune note disponible pour le moment.", bodyFont);
+                empty.setSpacingBefore(10);
+                doc.add(empty);
+            } else {
+                Font sectionFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, new BaseColor(4, 41, 84));
+                Font dataFont = new Font(Font.FontFamily.HELVETICA, 9);
+
+                List<Double> semestreMoyennes = new ArrayList<>();
+
+                for (Map.Entry<Note.Semestre, List<MatiereBulletinRow>> entry : rowsBySemestre.entrySet()) {
+                    String semestreLabel = entry.getKey() != null ? entry.getKey().name() : "-";
+                    Paragraph semestreTitle = new Paragraph("Semestre " + semestreLabel, sectionFont);
+                    semestreTitle.setSpacingBefore(8);
+                    semestreTitle.setSpacingAfter(6);
+                    doc.add(semestreTitle);
+
+                    PdfPTable table = new PdfPTable(6);
+                    table.setWidthPercentage(100);
+                    table.setWidths(new float[]{4.2f, 1.2f, 1.2f, 1.2f, 1.4f, 1.8f});
+
+                    Font headerFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.WHITE);
+                    String[] headers = {"Matière", "Coeff", "DS", "TP", "EXAMEN", "Moyenne"};
+                    for (String h : headers) {
+                        PdfPCell cell = new PdfPCell(new Phrase(h, headerFont));
+                        cell.setBackgroundColor(new BaseColor(4, 41, 84));
+                        cell.setPadding(7);
+                        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                        table.addCell(cell);
+                    }
+
+                    boolean alternate = false;
+                    for (MatiereBulletinRow row : entry.getValue()) {
+                        BaseColor rowColor = alternate ? new BaseColor(245, 245, 245) : BaseColor.WHITE;
+                        String[] values = {
+                            row.matiereNom,
+                            String.format("%.2f", row.coefficient),
+                            row.ds == null ? "-" : String.format("%.2f", row.ds),
+                            row.tp == null ? "-" : String.format("%.2f", row.tp),
+                            row.examen == null ? "-" : String.format("%.2f", row.examen),
+                            String.format("%.2f", row.moyenne)
+                        };
+
+                        for (String value : values) {
+                            PdfPCell cell = new PdfPCell(new Phrase(value, dataFont));
+                            cell.setBackgroundColor(rowColor);
+                            cell.setPadding(6);
+                            cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                            table.addCell(cell);
+                        }
+                        alternate = !alternate;
+                    }
+
+                    double semestreMoyenne = computeSimpleAverage(entry.getValue());
+                    PdfPCell moyenneLabel = new PdfPCell(new Phrase("Moyenne Semestre", new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                    moyenneLabel.setColspan(5);
+                    moyenneLabel.setHorizontalAlignment(Element.ALIGN_RIGHT);
+                    moyenneLabel.setPadding(6);
+                    table.addCell(moyenneLabel);
+
+                    PdfPCell moyenneValue = new PdfPCell(new Phrase(String.format("%.2f", semestreMoyenne), new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                    moyenneValue.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    moyenneValue.setPadding(6);
+                    table.addCell(moyenneValue);
+
+                    doc.add(table);
+                    semestreMoyennes.add(semestreMoyenne);
+                }
+
+                double moyenneSemestres = semestreMoyennes.isEmpty()
+                    ? 0.0
+                    : semestreMoyennes.stream().mapToDouble(Double::doubleValue).sum() / semestreMoyennes.size();
+
+                Font moyenneFont = new Font(
+                    Font.FontFamily.HELVETICA,
+                    13,
+                    Font.BOLD,
+                    moyenneSemestres >= 10 ? new BaseColor(27, 94, 32) : new BaseColor(183, 28, 28)
+                );
+                Paragraph moyennePara = new Paragraph(
+                    String.format("\nMoyenne des semestres : %.2f / 20", moyenneSemestres),
+                    moyenneFont
+                );
+                moyennePara.setAlignment(Element.ALIGN_RIGHT);
+                moyennePara.setSpacingBefore(12);
+                doc.add(moyennePara);
+            }
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -322,27 +423,29 @@ public class DemandeDocumentService {
     private byte[] genererFacturePaiement(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "ATTESTATION DE PAIEMENT");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Nous attestons que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("a bien effectué le règlement de ses frais de scolarité ", bodyFont));
-            p.add(new Chunk("pour l'année universitaire en cours.\n", bodyFont));
             doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("a bien effectué le règlement de ses frais de scolarité ", bodyFont));
+            p2.add(new Chunk("pour l'année universitaire en cours.\n", bodyFont));
+            doc.add(p2);
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -355,38 +458,41 @@ public class DemandeDocumentService {
     private byte[] genererDemandeStage(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "DEMANDE DE STAGE");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
+            Font boldFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE, Font.BOLD);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("L'établissement certifie que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("est autorisé(e) à effectuer un stage au sein de l'entreprise :\n\n", bodyFont));
+            doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("est autorisé(e) à effectuer un stage au sein de l'entreprise :\n\n", bodyFont));
             if (d.getNomEntrepriseStage() != null) {
-                p.add(new Chunk("Entreprise : ", boldFont));
-                p.add(new Chunk(d.getNomEntrepriseStage() + "\n", bodyFont));
+                p2.add(new Chunk("Entreprise : ", boldFont));
+                p2.add(new Chunk(d.getNomEntrepriseStage() + "\n", bodyFont));
             }
             if (d.getAdresseEntreprise() != null) {
-                p.add(new Chunk("Adresse : ", boldFont));
-                p.add(new Chunk(d.getAdresseEntreprise() + "\n", bodyFont));
+                p2.add(new Chunk("Adresse : ", boldFont));
+                p2.add(new Chunk(d.getAdresseEntreprise() + "\n", bodyFont));
             }
             if (d.getNomEncadrant() != null) {
-                p.add(new Chunk("Encadrant : ", boldFont));
-                p.add(new Chunk(d.getNomEncadrant() + "\n", bodyFont));
+                p2.add(new Chunk("Encadrant : ", boldFont));
+                p2.add(new Chunk(d.getNomEncadrant() + "\n", bodyFont));
             }
-            doc.add(p);
+            doc.add(p2);
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -399,34 +505,37 @@ public class DemandeDocumentService {
     private byte[] genererValidationStage(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "ATTESTATION DE VALIDATION DE STAGE");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
+            Font boldFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE, Font.BOLD);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Nous soussignés, attestons que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("a effectué et validé avec succès son stage de fin d'études au sein de :\n\n", bodyFont));
+            doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("a effectué et validé avec succès son stage de fin d'études au sein de :\n\n", bodyFont));
             if (d.getNomEntrepriseStage() != null) {
-                p.add(new Chunk("Entreprise : ", boldFont));
-                p.add(new Chunk(d.getNomEntrepriseStage() + "\n", bodyFont));
+                p2.add(new Chunk("Entreprise : ", boldFont));
+                p2.add(new Chunk(d.getNomEntrepriseStage() + "\n", bodyFont));
             }
             if (d.getNomEncadrant() != null) {
-                p.add(new Chunk("Encadrant entreprise : ", boldFont));
-                p.add(new Chunk(d.getNomEncadrant() + "\n", bodyFont));
+                p2.add(new Chunk("Encadrant entreprise : ", boldFont));
+                p2.add(new Chunk(d.getNomEncadrant() + "\n", bodyFont));
             }
-            doc.add(p);
+            doc.add(p2);
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -439,28 +548,30 @@ public class DemandeDocumentService {
     private byte[] genererAttestationReussite(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "ATTESTATION DE RÉUSSITE");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Le Directeur de l'établissement atteste que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("a satisfait aux épreuves de fin d'année universitaire ", bodyFont));
-            p.add(new Chunk("et a obtenu son diplôme avec succès.\n\n", bodyFont));
-            p.add(new Chunk("Cette attestation lui est délivrée pour servir et valoir ce que de droit.\n", bodyFont));
             doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("a satisfait aux épreuves de fin d'année universitaire ", bodyFont));
+            p2.add(new Chunk("et a obtenu son diplôme avec succès.\n\n", bodyFont));
+            p2.add(new Chunk("Cette attestation lui est délivrée pour servir et valoir ce que de droit.\n", bodyFont));
+            doc.add(p2);
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -473,28 +584,30 @@ public class DemandeDocumentService {
     private byte[] genererAttestationAffectation(DemandeDocument d) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            Document doc = new Document(PageSize.A4, 80, 80, 100, 80);
+            Document doc = new Document(PageSize.A4, DOC_MARGIN_LEFT, DOC_MARGIN_RIGHT, DOC_MARGIN_TOP, DOC_MARGIN_BOTTOM);
             PdfWriter.getInstance(doc, out);
             doc.open();
             addEntete(doc, "ATTESTATION D'AFFECTATION");
 
-            Font bodyFont = new Font(Font.FontFamily.HELVETICA, 12);
-            Font boldFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD);
+            Font bodyFont = new Font(Font.FontFamily.HELVETICA, BODY_FONT_SIZE);
             Etudiant e = d.getEtudiant();
             String date = d.getCreatedAt().format(DATE_FORMAT);
 
             Paragraph p = new Paragraph();
-            p.setSpacingBefore(30);
-            p.setLeading(22);
+            p.setSpacingBefore(18);
+            p.setLeading(18);
             p.add(new Chunk("Nous attestons que l'étudiant(e) :\n\n", bodyFont));
-            p.add(new Chunk("Nom et Prénom : ", boldFont));
-            p.add(new Chunk(e.getNom() + " " + e.getPrenom() + "\n", bodyFont));
-            p.add(new Chunk("Matricule : ", boldFont));
-            p.add(new Chunk(e.getMatricule() + "\n\n", bodyFont));
-            p.add(new Chunk("a été régulièrement affecté(e) au sein de notre établissement ", bodyFont));
-            p.add(new Chunk("pour l'année universitaire en cours.\n\n", bodyFont));
-            p.add(new Chunk("Cette attestation est délivrée à sa demande pour servir et valoir ce que de droit.\n", bodyFont));
             doc.add(p);
+
+            doc.add(buildEtudiantInfoTable(e));
+
+            Paragraph p2 = new Paragraph();
+            p2.setSpacingBefore(2);
+            p2.setLeading(18);
+            p2.add(new Chunk("a été régulièrement affecté(e) au sein de notre établissement ", bodyFont));
+            p2.add(new Chunk("pour l'année universitaire en cours.\n\n", bodyFont));
+            p2.add(new Chunk("Cette attestation est délivrée à sa demande pour servir et valoir ce que de droit.\n", bodyFont));
+            doc.add(p2);
 
             addSignatureAdmin(doc, date);
             doc.close();
@@ -509,8 +622,8 @@ public class DemandeDocumentService {
     // ════════════════════════════════════════════════════════
 
     private void addEntete(Document doc, String titre) throws DocumentException {
-        Font etablissementFont = new Font(Font.FontFamily.HELVETICA, 13, Font.BOLD, new BaseColor(4, 41, 84));
-        Font sousTitreFont = new Font(Font.FontFamily.HELVETICA, 10, Font.NORMAL, BaseColor.DARK_GRAY);
+        Font etablissementFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, new BaseColor(4, 41, 84));
+        Font sousTitreFont = new Font(Font.FontFamily.HELVETICA, 9, Font.NORMAL, BaseColor.DARK_GRAY);
 
         Paragraph entete = new Paragraph();
         entete.setAlignment(Element.ALIGN_CENTER);
@@ -519,16 +632,16 @@ public class DemandeDocumentService {
         entete.add(new Chunk("Tunis, Tunisie\n", sousTitreFont));
         doc.add(entete);
 
-        Font sepFont = new Font(Font.FontFamily.HELVETICA, 10, Font.NORMAL, new BaseColor(4, 41, 84));
+        Font sepFont = new Font(Font.FontFamily.HELVETICA, 9, Font.NORMAL, new BaseColor(4, 41, 84));
         Paragraph sep1 = new Paragraph("________________________________________________", sepFont);
         sep1.setAlignment(Element.ALIGN_CENTER);
         doc.add(sep1);
 
-        Font titreFont = new Font(Font.FontFamily.HELVETICA, 16, Font.BOLD, new BaseColor(4, 41, 84));
+        Font titreFont = new Font(Font.FontFamily.HELVETICA, 14, Font.BOLD, new BaseColor(4, 41, 84));
         Paragraph titrePara = new Paragraph(titre, titreFont);
         titrePara.setAlignment(Element.ALIGN_CENTER);
-        titrePara.setSpacingBefore(15);
-        titrePara.setSpacingAfter(10);
+        titrePara.setSpacingBefore(10);
+        titrePara.setSpacingAfter(6);
         doc.add(titrePara);
 
         Paragraph sep2 = new Paragraph("________________________________________________", sepFont);
@@ -543,7 +656,7 @@ public class DemandeDocumentService {
         Font normalFont = new Font(Font.FontFamily.HELVETICA, 11);
 
         Paragraph titre = new Paragraph("\nValidations des enseignants :\n", boldFont);
-        titre.setSpacingBefore(20);
+        titre.setSpacingBefore(10);
         doc.add(titre);
 
         List<ValidationEnseignant> validations = validationRepository.findByDemandeId(d.getId());
@@ -577,13 +690,206 @@ public class DemandeDocumentService {
         Font boldFont = new Font(Font.FontFamily.HELVETICA, 11, Font.BOLD);
 
         Paragraph signature = new Paragraph();
-        signature.setSpacingBefore(40);
+        signature.setSpacingBefore(24);
         signature.setAlignment(Element.ALIGN_RIGHT);
         signature.add(new Chunk("Fait à Tunis, le " + date + "\n\n", normalFont));
         signature.add(new Chunk("Le Directeur\n", boldFont));
         signature.add(new Chunk("(Cachet et Signature)\n\n\n", normalFont));
         signature.add(new Chunk("_______________________", normalFont));
         doc.add(signature);
+    }
+
+    private PdfPTable buildEtudiantInfoTable(Etudiant etudiant) {
+        PdfPTable infoTable = new PdfPTable(2);
+        infoTable.setWidthPercentage(100);
+        infoTable.setSpacingAfter(6);
+
+        Classe classe = etudiant.getClasse();
+        Niveau niveau = classe != null ? classe.getNiveau() : null;
+        Filiere filiere = niveau != null ? niveau.getFiliere() : null;
+
+        addInfoCell(infoTable, "Nom et Prénom :", formatNomPrenom(etudiant.getPrenom(), etudiant.getNom()));
+        addInfoCell(infoTable, "Matricule :", safeValue(etudiant.getMatricule()));
+        addInfoCell(infoTable, "Email :", safeValue(etudiant.getEmail()));
+        addInfoCell(infoTable, "Téléphone :", safeValue(etudiant.getTelephone()));
+        addInfoCell(infoTable, "Date de naissance :", formatDate(etudiant.getDateNaissance()));
+        addInfoCell(infoTable, "Adresse :", safeValue(etudiant.getAdresse()));
+        addInfoCell(infoTable, "Statut :", etudiant.getStatut() != null ? etudiant.getStatut().name() : "-");
+        addInfoCell(infoTable, "Classe :", formatCodeNom(classe != null ? classe.getCode() : null, classe != null ? classe.getNom() : null));
+        addInfoCell(infoTable, "Niveau :", formatCodeNom(niveau != null ? niveau.getCode() : null, niveau != null ? niveau.getNom() : null));
+        addInfoCell(infoTable, "Filière :", formatCodeNom(filiere != null ? filiere.getCode() : null, filiere != null ? filiere.getNom() : null));
+        addInfoCell(infoTable, "Date d'inscription :", formatDateTime(etudiant.getCreatedAt()));
+
+        return infoTable;
+    }
+
+    private void addInfoCell(PdfPTable table, String label, String value) {
+        Font labelFont = new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD);
+        Font valueFont = new Font(Font.FontFamily.HELVETICA, 9);
+        PdfPCell labelCell = new PdfPCell(new Phrase(label, labelFont));
+        PdfPCell valueCell = new PdfPCell(new Phrase(value, valueFont));
+        labelCell.setBorder(Rectangle.NO_BORDER);
+        valueCell.setBorder(Rectangle.NO_BORDER);
+        labelCell.setPadding(4);
+        valueCell.setPadding(4);
+        table.addCell(labelCell);
+        table.addCell(valueCell);
+    }
+
+    private String formatNomPrenom(String prenom, String nom) {
+        String p = prenom != null ? prenom.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = (p + " " + n).trim();
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String formatCodeNom(String code, String nom) {
+        String c = code != null ? code.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = c.isEmpty() ? n : n.isEmpty() ? c : c + " - " + n;
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String safeValue(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private String formatDate(LocalDate date) {
+        return date != null ? date.format(DATE_FORMAT) : "-";
+    }
+
+    private String formatDateTime(LocalDateTime dateTime) {
+        return dateTime != null ? dateTime.format(DATE_TIME_FORMAT) : "-";
+    }
+
+    private List<MatiereBulletinRow> buildMatiereRows(List<Note> notes) {
+        Map<String, MatiereBulletinAccumulator> map = new LinkedHashMap<>();
+
+        for (Note note : notes) {
+            if (note.getMatiere() == null) continue;
+
+            String semestre = note.getSemestre() != null ? note.getSemestre().name() : "";
+            String key = semestre + "::" + note.getMatiere().getId();
+            MatiereBulletinAccumulator acc = map.computeIfAbsent(
+                key,
+                k -> new MatiereBulletinAccumulator(
+                    note.getMatiere().getNom(),
+                    note.getMatiere().getCoefficient() != null ? note.getMatiere().getCoefficient() : 1.0,
+                    note.getSemestre()
+                )
+            );
+
+            if (note.getValeur() == null || note.getTypeNote() == null) {
+                continue;
+            }
+
+            switch (note.getTypeNote()) {
+                case CONTROLE -> {
+                    acc.dsSum += note.getValeur();
+                    acc.dsCount++;
+                }
+                case TP -> {
+                    acc.tpSum += note.getValeur();
+                    acc.tpCount++;
+                }
+                case EXAMEN -> {
+                    acc.examSum += note.getValeur();
+                    acc.examCount++;
+                }
+                default -> {
+                    // PROJET non utilisé dans la formule
+                }
+            }
+        }
+
+        return map.values().stream()
+            .map(acc -> {
+                Double ds = acc.dsCount > 0 ? acc.dsSum / acc.dsCount : null;
+                Double tp = acc.tpCount > 0 ? acc.tpSum / acc.tpCount : null;
+                Double exam = acc.examCount > 0 ? acc.examSum / acc.examCount : null;
+
+                double moyenne = (exam == null ? 0.0 : exam * 0.7)
+                    + (ds == null ? 0.0 : ds * 0.3);
+
+                double moyenneRounded = Math.round(moyenne * 100.0) / 100.0;
+                return new MatiereBulletinRow(acc.matiereNom, acc.coefficient, ds, tp, exam, moyenneRounded, acc.semestre);
+            })
+            .sorted(Comparator
+                .comparingInt((MatiereBulletinRow r) -> semestreOrder(r.semestre))
+                .thenComparing(r -> r.matiereNom))
+            .toList();
+    }
+
+    private Map<Note.Semestre, List<MatiereBulletinRow>> groupRowsBySemestre(List<MatiereBulletinRow> rows) {
+        Map<Note.Semestre, List<MatiereBulletinRow>> grouped = new LinkedHashMap<>();
+        rows.stream()
+            .sorted(Comparator
+                .comparingInt((MatiereBulletinRow r) -> semestreOrder(r.semestre))
+                .thenComparing(r -> r.matiereNom))
+            .forEach(row -> grouped
+                .computeIfAbsent(row.semestre, k -> new ArrayList<>())
+                .add(row));
+        return grouped;
+    }
+
+    private double computeSimpleAverage(List<MatiereBulletinRow> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return 0.0;
+        }
+        double total = 0.0;
+        for (MatiereBulletinRow row : rows) {
+            total += row.moyenne;
+        }
+        return total / rows.size();
+    }
+
+    private int semestreOrder(Note.Semestre semestre) {
+        if (semestre == null) return 99;
+        return switch (semestre) {
+            case S1 -> 1;
+            case S2 -> 2;
+            case S3 -> 3;
+            case S4 -> 4;
+            case S5 -> 5;
+        };
+    }
+
+    private static class MatiereBulletinAccumulator {
+        private final String matiereNom;
+        private final double coefficient;
+        private final Note.Semestre semestre;
+        private double dsSum = 0.0;
+        private int dsCount = 0;
+        private double tpSum = 0.0;
+        private int tpCount = 0;
+        private double examSum = 0.0;
+        private int examCount = 0;
+
+        private MatiereBulletinAccumulator(String matiereNom, double coefficient, Note.Semestre semestre) {
+            this.matiereNom = matiereNom;
+            this.coefficient = coefficient;
+            this.semestre = semestre;
+        }
+    }
+
+    private static class MatiereBulletinRow {
+        private final String matiereNom;
+        private final double coefficient;
+        private final Double ds;
+        private final Double tp;
+        private final Double examen;
+        private final double moyenne;
+        private final Note.Semestre semestre;
+
+        private MatiereBulletinRow(String matiereNom, double coefficient, Double ds, Double tp, Double examen, double moyenne, Note.Semestre semestre) {
+            this.matiereNom = matiereNom;
+            this.coefficient = coefficient;
+            this.ds = ds;
+            this.tp = tp;
+            this.examen = examen;
+            this.moyenne = moyenne;
+            this.semestre = semestre;
+        }
     }
 
     // ─── MAPPER ───────────────────────────────────────────

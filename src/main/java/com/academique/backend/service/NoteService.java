@@ -19,8 +19,13 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -122,9 +127,12 @@ public class NoteService {
     }
 
     public Double calculerMoyenne(Long etudiantId, String semestre) {
-        Double moyenne = noteRepository.calculerMoyenne(
+        List<Note> notes = noteRepository.findByEtudiantIdAndSemestre(
             etudiantId, Note.Semestre.valueOf(semestre));
-        return moyenne != null ? Math.round(moyenne * 100.0) / 100.0 : 0.0;
+        List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+
+        double moyenne = computeSimpleAverage(rows);
+        return Math.round(moyenne * 100.0) / 100.0;
     }
 
     public byte[] exportBulletinPdf(Long etudiantId, String semestre) {
@@ -144,7 +152,7 @@ public class NoteService {
                 .thenComparing(n -> n.getMatiere() != null && n.getMatiere().getNom() != null ? n.getMatiere().getNom() : ""))
             .toList();
 
-        return buildBulletinPdf(etudiant, notes, "RELEVE DE NOTES COMPLET");
+        return buildRelevePdfComplet(etudiant, notes);
     }
 
     public Map<String, Object> envoyerBulletinsParNiveau(String niveauCode) {
@@ -250,15 +258,7 @@ public class NoteService {
     private byte[] buildBulletinPdf(Etudiant etudiant, List<Note> notes, String title) {
         List<MatiereBulletinRow> rows = buildMatiereRows(notes);
 
-        double totalPondere = 0.0;
-        double totalCoeff = 0.0;
-        for (MatiereBulletinRow row : rows) {
-            totalPondere += row.moyenne * row.coefficient;
-            totalCoeff += row.coefficient;
-        }
-        double moyenneGenerale = totalCoeff > 0
-            ? Math.round((totalPondere / totalCoeff) * 100.0) / 100.0
-            : 0.0;
+        double moyenneGenerale = Math.round(computeSimpleAverage(rows) * 100.0) / 100.0;
 
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -279,14 +279,7 @@ public class NoteService {
             sousTitre.setSpacingAfter(18);
             document.add(sousTitre);
 
-            PdfPTable infoTable = new PdfPTable(2);
-            infoTable.setWidthPercentage(100);
-            infoTable.setSpacingAfter(16);
-            addInfoCell(infoTable, "Matricule :", etudiant.getMatricule());
-            addInfoCell(infoTable, "Nom & Prénom :", etudiant.getPrenom() + " " + etudiant.getNom());
-            addInfoCell(infoTable, "Statut :", etudiant.getStatut().name());
-            addInfoCell(infoTable, "Total matières :", String.valueOf(rows.size()));
-            document.add(infoTable);
+            document.add(buildStudentInfoTable(etudiant, rows.size()));
 
             PdfPTable table = new PdfPTable(6);
             table.setWidthPercentage(100);
@@ -353,6 +346,200 @@ public class NoteService {
         } catch (Exception e) {
             throw new RuntimeException("Erreur génération bulletin", e);
         }
+    }
+
+    private byte[] buildRelevePdfComplet(Etudiant etudiant, List<Note> notes) {
+        List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+        Map<Note.Semestre, List<MatiereBulletinRow>> rowsBySemestre = groupRowsBySemestre(rows);
+
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Document document = new Document(PageSize.A4);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            Font titleFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD, new BaseColor(4, 41, 84));
+            Font subFont = new Font(Font.FontFamily.HELVETICA, 11, Font.NORMAL, BaseColor.DARK_GRAY);
+            Font sectionFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, new BaseColor(4, 41, 84));
+            Font dataFont = new Font(Font.FontFamily.HELVETICA, 9);
+
+            Paragraph titre = new Paragraph("RELEVE DE NOTES COMPLET", titleFont);
+            titre.setAlignment(Element.ALIGN_CENTER);
+            titre.setSpacingAfter(4);
+            document.add(titre);
+
+            Paragraph sousTitre = new Paragraph("Système de Gestion Académique", subFont);
+            sousTitre.setAlignment(Element.ALIGN_CENTER);
+            sousTitre.setSpacingAfter(18);
+            document.add(sousTitre);
+
+            document.add(buildStudentInfoTable(etudiant, rows.size()));
+
+            List<Double> semestreMoyennes = new ArrayList<>();
+
+            for (Map.Entry<Note.Semestre, List<MatiereBulletinRow>> entry : rowsBySemestre.entrySet()) {
+                String semestreLabel = entry.getKey() != null ? entry.getKey().name() : "-";
+                Paragraph semestreTitle = new Paragraph("Semestre " + semestreLabel, sectionFont);
+                semestreTitle.setSpacingBefore(8);
+                semestreTitle.setSpacingAfter(6);
+                document.add(semestreTitle);
+
+                PdfPTable table = new PdfPTable(6);
+                table.setWidthPercentage(100);
+                table.setWidths(new float[]{4.2f, 1.2f, 1.2f, 1.2f, 1.4f, 1.8f});
+
+                Font headerFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.WHITE);
+                String[] headers = {"Matière", "Coeff", "DS", "TP", "EXAMEN", "Moyenne"};
+                for (String h : headers) {
+                    PdfPCell cell = new PdfPCell(new Phrase(h, headerFont));
+                    cell.setBackgroundColor(new BaseColor(4, 41, 84));
+                    cell.setPadding(7);
+                    cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    table.addCell(cell);
+                }
+
+                boolean alternate = false;
+                for (MatiereBulletinRow row : entry.getValue()) {
+                    BaseColor rowColor = alternate ? new BaseColor(245, 245, 245) : BaseColor.WHITE;
+                    String[] values = {
+                        row.matiereNom,
+                        String.format("%.2f", row.coefficient),
+                        row.ds == null ? "-" : String.format("%.2f", row.ds),
+                        row.tp == null ? "-" : String.format("%.2f", row.tp),
+                        row.examen == null ? "-" : String.format("%.2f", row.examen),
+                        String.format("%.2f", row.moyenne)
+                    };
+
+                    for (String value : values) {
+                        PdfPCell cell = new PdfPCell(new Phrase(value, dataFont));
+                        cell.setBackgroundColor(rowColor);
+                        cell.setPadding(6);
+                        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                        table.addCell(cell);
+                    }
+                    alternate = !alternate;
+                }
+
+                double semestreMoyenne = computeSimpleAverage(entry.getValue());
+                PdfPCell moyenneLabel = new PdfPCell(new Phrase("Moyenne Semestre", new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                moyenneLabel.setColspan(5);
+                moyenneLabel.setHorizontalAlignment(Element.ALIGN_RIGHT);
+                moyenneLabel.setPadding(6);
+                table.addCell(moyenneLabel);
+
+                PdfPCell moyenneValue = new PdfPCell(new Phrase(String.format("%.2f", semestreMoyenne), new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                moyenneValue.setHorizontalAlignment(Element.ALIGN_CENTER);
+                moyenneValue.setPadding(6);
+                table.addCell(moyenneValue);
+
+                document.add(table);
+                semestreMoyennes.add(semestreMoyenne);
+            }
+
+            double moyenneSemestres = semestreMoyennes.isEmpty()
+                ? 0.0
+                : semestreMoyennes.stream().mapToDouble(Double::doubleValue).sum() / semestreMoyennes.size();
+
+            Font moyenneFont = new Font(
+                Font.FontFamily.HELVETICA,
+                13,
+                Font.BOLD,
+                moyenneSemestres >= 10 ? new BaseColor(27, 94, 32) : new BaseColor(183, 28, 28)
+            );
+            Paragraph moyennePara = new Paragraph(
+                String.format("\nMoyenne des semestres : %.2f / 20", moyenneSemestres),
+                moyenneFont
+            );
+            moyennePara.setAlignment(Element.ALIGN_RIGHT);
+            moyennePara.setSpacingBefore(12);
+            document.add(moyennePara);
+
+            Paragraph mention = new Paragraph(
+                "Mention : " + getMention(moyenneSemestres),
+                new Font(Font.FontFamily.HELVETICA, 11, Font.ITALIC, BaseColor.DARK_GRAY)
+            );
+            mention.setAlignment(Element.ALIGN_RIGHT);
+            document.add(mention);
+
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Erreur génération relevé", e);
+        }
+    }
+
+    private PdfPTable buildStudentInfoTable(Etudiant etudiant, int totalMatieres) {
+        PdfPTable infoTable = new PdfPTable(2);
+        infoTable.setWidthPercentage(100);
+        infoTable.setSpacingAfter(16);
+
+        Classe classe = etudiant.getClasse();
+        Niveau niveau = classe != null ? classe.getNiveau() : null;
+        Filiere filiere = niveau != null ? niveau.getFiliere() : null;
+
+        addInfoCell(infoTable, "Matricule :", safeValue(etudiant.getMatricule()));
+        addInfoCell(infoTable, "Nom & Prénom :", formatNomPrenom(etudiant.getPrenom(), etudiant.getNom()));
+        addInfoCell(infoTable, "Email :", safeValue(etudiant.getEmail()));
+        addInfoCell(infoTable, "Téléphone :", safeValue(etudiant.getTelephone()));
+        addInfoCell(infoTable, "Date de naissance :", formatDate(etudiant.getDateNaissance()));
+        addInfoCell(infoTable, "Adresse :", safeValue(etudiant.getAdresse()));
+        addInfoCell(infoTable, "Statut :", etudiant.getStatut() != null ? etudiant.getStatut().name() : "-");
+        addInfoCell(infoTable, "Classe :", formatCodeNom(classe != null ? classe.getCode() : null, classe != null ? classe.getNom() : null));
+        addInfoCell(infoTable, "Niveau :", formatCodeNom(niveau != null ? niveau.getCode() : null, niveau != null ? niveau.getNom() : null));
+        addInfoCell(infoTable, "Filière :", formatCodeNom(filiere != null ? filiere.getCode() : null, filiere != null ? filiere.getNom() : null));
+        addInfoCell(infoTable, "Total matières :", String.valueOf(totalMatieres));
+        addInfoCell(infoTable, "Date d'inscription :", formatDateTime(etudiant.getCreatedAt()));
+
+        return infoTable;
+    }
+
+    private Map<Note.Semestre, List<MatiereBulletinRow>> groupRowsBySemestre(List<MatiereBulletinRow> rows) {
+        Map<Note.Semestre, List<MatiereBulletinRow>> grouped = new LinkedHashMap<>();
+        rows.stream()
+            .sorted(Comparator
+                .comparingInt((MatiereBulletinRow r) -> semestreOrder(r.semestre))
+                .thenComparing(r -> r.matiereNom))
+            .forEach(row -> grouped
+                .computeIfAbsent(row.semestre, k -> new ArrayList<>())
+                .add(row));
+        return grouped;
+    }
+
+    private double computeSimpleAverage(List<MatiereBulletinRow> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return 0.0;
+        }
+        double total = 0.0;
+        for (MatiereBulletinRow row : rows) {
+            total += row.moyenne;
+        }
+        return total / rows.size();
+    }
+
+    private String formatNomPrenom(String prenom, String nom) {
+        String p = prenom != null ? prenom.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = (p + " " + n).trim();
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String formatCodeNom(String code, String nom) {
+        String c = code != null ? code.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = c.isEmpty() ? n : n.isEmpty() ? c : c + " - " + n;
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String safeValue(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private String formatDate(LocalDate date) {
+        return date != null ? date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-";
+    }
+
+    private String formatDateTime(LocalDateTime dateTime) {
+        return dateTime != null ? dateTime.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) : "-";
     }
 
     private List<MatiereBulletinRow> buildMatiereRows(List<Note> notes) {

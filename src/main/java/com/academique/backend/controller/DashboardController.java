@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.time.LocalDate;
 
 @RestController
@@ -64,9 +65,8 @@ public class DashboardController {
             }
 
             if (!isPfe && semestreActuel != null && !"STAGE_PFE".equals(semestreActuel)) {
-                totalMatieres = matiereRepository.countBySemestreIn(
-                    java.util.List.of(Matiere.Semestre.valueOf(semestreActuel))
-                );
+                Matiere.Semestre semestre = Matiere.Semestre.valueOf(semestreActuel);
+                totalMatieres = matiereRepository.countByEtudiantAndSemestre(etudiant.getId(), semestre);
             }
         } else {
             totalMatieres = matiereRepository.count();
@@ -81,7 +81,11 @@ public class DashboardController {
 
         if (etudiant != null) {
             totalAbsences = absenceRepository.countByEtudiantId(etudiant.getId());
-            totalEvaluations = noteRepository.findByEtudiantId(etudiant.getId()).size();
+            totalEvaluations = noteRepository.findByEtudiantId(etudiant.getId()).stream()
+                .map(note -> note.getMatiere() != null ? note.getMatiere().getId() : null)
+                .filter(Objects::nonNull)
+                .distinct()
+                .count();
 
             List<DemandeDocument> documents = demandeDocumentRepository.findByEtudiantId(etudiant.getId());
             totalDocuments = documents.size();

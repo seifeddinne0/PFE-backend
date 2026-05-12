@@ -108,9 +108,20 @@ public class SeanceService {
     public List<SeanceResponse> getByClasseId(Long classeId, LocalDate referenceDate) {
         Classe classe = classeRepository.findById(classeId)
             .orElseThrow(() -> new ResourceNotFoundException("Classe non trouvée"));
+        LocalDate safeDate = referenceDate != null ? referenceDate : LocalDate.now();
+        if (isVacationPeriod(safeDate)) {
+            return List.of();
+        }
+
+        String niveauCode = classe.getNiveau() != null ? classe.getNiveau().getCode() : null;
+        if (isStagePfePeriod(niveauCode, safeDate)) {
+            return List.of();
+        }
+
         Long niveauId = classe.getNiveau().getId();
-        return filterSeancesByDate(seanceRepository.findForClasseAndNiveau(classeId, niveauId), referenceDate)
-            .stream()
+        Matiere.Semestre semestreActif = getCurrentSemester(niveauCode, safeDate);
+
+        return seanceRepository.findForClasseAndNiveauAndSemestre(classeId, niveauId, semestreActif).stream()
             .map(this::toResponse)
             .toList();
     }

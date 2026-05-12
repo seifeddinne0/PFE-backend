@@ -41,6 +41,33 @@ public interface SeanceRepository extends JpaRepository<Seance, Long> {
             SELECT s
             FROM Seance s
             JOIN FETCH s.matiere m
+            JOIN FETCH s.creneau cr
+            LEFT JOIN FETCH s.classe c
+            JOIN FETCH s.niveau n
+            WHERE s.semestre = :semestre
+              AND n.id = :niveauId
+              AND (c.id = :classeId OR (c IS NULL AND s.typeSeance = com.academique.backend.entity.Seance.TypeSeance.COURS))
+            ORDER BY
+              CASE s.jourSemaine
+                WHEN com.academique.backend.entity.Seance.JourSemaine.LUNDI THEN 1
+                WHEN com.academique.backend.entity.Seance.JourSemaine.MARDI THEN 2
+                WHEN com.academique.backend.entity.Seance.JourSemaine.MERCREDI THEN 3
+                WHEN com.academique.backend.entity.Seance.JourSemaine.JEUDI THEN 4
+                WHEN com.academique.backend.entity.Seance.JourSemaine.VENDREDI THEN 5
+                WHEN com.academique.backend.entity.Seance.JourSemaine.SAMEDI THEN 6
+                ELSE 7
+              END,
+              cr.ordre
+            """)
+    List<Seance> findForClasseAndNiveauAndSemestre(
+            @Param("classeId") Long classeId,
+            @Param("niveauId") Long niveauId,
+            @Param("semestre") Matiere.Semestre semestre);
+
+    @Query("""
+            SELECT s
+            FROM Seance s
+            JOIN FETCH s.matiere m
             LEFT JOIN FETCH s.classe c
             JOIN FETCH s.niveau n
             JOIN FETCH n.filiere f
