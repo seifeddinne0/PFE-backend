@@ -1,0 +1,9 @@
+package com.academique.backend.repository;
+
+import com.academique.backend.entity.Role;
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.Optional;
+
+public interface RoleRepository extends JpaRepository<Role, Long> {
+    Optional<Role> findByName(Role.RoleName name);
+}

@@ -1,0 +1,788 @@
+package com.academique.backend.service;
+
+import com.academique.backend.dto.request.NoteRequest;
+import com.academique.backend.dto.response.NoteResponse;
+import com.academique.backend.entity.*;
+import com.academique.backend.exception.ResourceNotFoundException;
+import com.academique.backend.repository.*;
+import com.itextpdf.text.*;
+import com.itextpdf.text.pdf.*;
+import jakarta.mail.internet.MimeMessage;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import java.io.ByteArrayOutputStream;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class NoteService {
+
+    private final NoteRepository noteRepository;
+    private final EtudiantRepository etudiantRepository;
+    private final MatiereRepository matiereRepository;
+    private final EnseignantRepository enseignantRepository;
+    private final NotificationService notificationService;
+    private final Optional<JavaMailSender> mailSender;
+
+    public NoteResponse create(NoteRequest request) {
+        assertCurrentUserCanManageNotes();
+
+        Etudiant etudiant = etudiantRepository.findById(request.getEtudiantId())
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        Matiere matiere = matiereRepository.findById(request.getMatiereId())
+            .orElseThrow(() -> new ResourceNotFoundException("Matière non trouvée"));
+
+        Note note = new Note();
+        note.setValeur(request.getValeur());
+        note.setEtudiant(etudiant);
+        note.setMatiere(matiere);
+        note.setTypeNote(parseTypeNote(request.getTypeNote()));
+        note.setSemestre(request.getSemestre() != null ?
+            Note.Semestre.valueOf(request.getSemestre()) : Note.Semestre.S1);
+        note.setCommentaire(request.getCommentaire());
+
+        if (request.getEnseignantId() != null) {
+            Enseignant enseignant = enseignantRepository.findById(request.getEnseignantId())
+                .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+            note.setEnseignant(enseignant);
+        }
+        Note saved = noteRepository.save(note);
+
+        // Notify Student
+        notificationService.createNotification(
+            etudiant.getUser().getId(),
+            "ETUDIANT",
+            "Nouvelle note disponible",
+            "Une nouvelle note de " + saved.getValeur() + "/20 a été ajoutée pour la matière : " + matiere.getNom(),
+            "NOTE",
+            etudiant.getEmail()
+        );
+
+        return toResponse(saved);
+    }
+
+    public Page<NoteResponse> getAll(Pageable pageable) {
+        return noteRepository.findAll(pageable).map(this::toResponse);
+    }
+
+    public NoteResponse getById(Long id) {
+        return toResponse(noteRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Note non trouvée")));
+    }
+
+    public List<NoteResponse> getByEtudiant(Long etudiantId) {
+        return noteRepository.findByEtudiantId(etudiantId)
+            .stream().map(this::toResponse).toList();
+    }
+
+    public List<NoteResponse> getByEtudiantAndSemestre(Long etudiantId, String semestre) {
+        return noteRepository.findByEtudiantIdAndSemestre(
+            etudiantId, Note.Semestre.valueOf(semestre))
+            .stream().map(this::toResponse).toList();
+    }
+
+    public NoteResponse update(Long id, NoteRequest request) {
+        assertCurrentUserCanManageNotes();
+
+        Note note = noteRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Note non trouvée"));
+        note.setValeur(request.getValeur());
+        note.setCommentaire(request.getCommentaire());
+        if (request.getTypeNote() != null)
+            note.setTypeNote(parseTypeNote(request.getTypeNote()));
+        if (request.getSemestre() != null)
+            note.setSemestre(Note.Semestre.valueOf(request.getSemestre()));
+        return toResponse(noteRepository.save(note));
+    }
+    public List<NoteResponse> getByEtudiantEmail(String email) {
+        Etudiant etudiant = etudiantRepository.findByEmail(email)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        assertNotesAccessEnabled(etudiant);
+        return noteRepository.findByEtudiantId(etudiant.getId()).stream().map(this::toResponse).toList();
+    }
+
+    public void delete(Long id) {
+        assertCurrentUserCanManageNotes();
+
+        if (!noteRepository.existsById(id))
+            throw new ResourceNotFoundException("Note non trouvée");
+        noteRepository.deleteById(id);
+    }
+
+    public Double calculerMoyenne(Long etudiantId, String semestre) {
+        List<Note> notes = noteRepository.findByEtudiantIdAndSemestre(
+            etudiantId, Note.Semestre.valueOf(semestre));
+        List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+
+        double moyenne = computeWeightedAverage(rows);
+        return Math.round(moyenne * 100.0) / 100.0;
+    }
+
+    public byte[] exportBulletinPdf(Long etudiantId, String semestre) {
+        Etudiant etudiant = etudiantRepository.findById(etudiantId)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        List<Note> notes = noteRepository.findByEtudiantIdAndSemestre(
+            etudiantId, Note.Semestre.valueOf(semestre));
+        return buildBulletinPdf(etudiant, notes, "BULLETIN DE NOTES - " + semestre);
+    }
+
+    public byte[] exportBulletinPdfComplet(Long etudiantId) {
+        Etudiant etudiant = etudiantRepository.findById(etudiantId)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        List<Note> notes = noteRepository.findByEtudiantId(etudiantId).stream()
+            .sorted(Comparator
+                .comparingInt((Note n) -> semestreOrder(n.getSemestre()))
+                .thenComparing(n -> n.getMatiere() != null && n.getMatiere().getNom() != null ? n.getMatiere().getNom() : ""))
+            .toList();
+
+        return buildRelevePdfComplet(etudiant, notes);
+    }
+
+    public Map<String, Object> envoyerBulletinsParNiveau(String niveauCode) {
+        String normalizedNiveau = normalizeNiveauCode(niveauCode);
+        List<Etudiant> etudiants = etudiantRepository.findByNiveauCode(normalizedNiveau);
+
+        if (etudiants.isEmpty()) {
+            throw new IllegalArgumentException("Aucun étudiant trouvé pour le niveau " + normalizedNiveau);
+        }
+
+        int unlocked = 0;
+        for (Etudiant etudiant : etudiants) {
+            if (!Boolean.TRUE.equals(etudiant.getNotesAccessEnabled())) {
+                etudiant.setNotesAccessEnabled(true);
+                unlocked++;
+            }
+        }
+        if (unlocked > 0) {
+            etudiantRepository.saveAll(etudiants);
+        }
+
+        if (mailSender.isEmpty()) {
+            for (Etudiant etudiant : etudiants) {
+                if (etudiant.getUser() != null) {
+                    notificationService.createNotification(
+                        etudiant.getUser().getId(),
+                        "ETUDIANT",
+                        "Bulletin disponible",
+                        "Votre bulletin est publie et disponible au telechargement.",
+                        "BULLETIN",
+                        etudiant.getEmail()
+                    );
+                }
+            }
+
+            Map<String, Object> noMailResult = new HashMap<>();
+            noMailResult.put("niveauCode", normalizedNiveau);
+            noMailResult.put("total", etudiants.size());
+            noMailResult.put("sent", 0);
+            noMailResult.put("failed", 0);
+            noMailResult.put("skipped", etudiants.size());
+            noMailResult.put("unlocked", unlocked);
+            noMailResult.put("message", "Envoi email indisponible: configurez spring.mail.*");
+            return noMailResult;
+        }
+
+        JavaMailSender sender = mailSender.get();
+
+        int sent = 0;
+        int failed = 0;
+        int skipped = 0;
+
+        for (Etudiant etudiant : etudiants) {
+            if (etudiant.getEmail() == null || etudiant.getEmail().isBlank()) {
+                skipped++;
+                continue;
+            }
+
+            try {
+                byte[] pdf = exportBulletinPdfComplet(etudiant.getId());
+
+                MimeMessage message = sender.createMimeMessage();
+                MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+                helper.setTo(etudiant.getEmail());
+                helper.setSubject("Votre bulletin - " + normalizedNiveau);
+                helper.setText(
+                    "Bonjour " + etudiant.getPrenom() + ",\n\n"
+                        + "Veuillez trouver ci-joint votre bulletin de notes au format PDF.\n\n"
+                        + "Cordialement,\nAdministration",
+                    false
+                );
+                helper.addAttachment(
+                    "bulletin_" + etudiant.getMatricule() + ".pdf",
+                    new ByteArrayResource(pdf)
+                );
+
+                sender.send(message);
+                if (etudiant.getUser() != null) {
+                    notificationService.createNotification(
+                        etudiant.getUser().getId(),
+                        "ETUDIANT",
+                        "Bulletin disponible",
+                        "Votre bulletin est publie et disponible au telechargement.",
+                        "BULLETIN",
+                        etudiant.getEmail()
+                    );
+                }
+                sent++;
+            } catch (Exception e) {
+                log.error(
+                    "Erreur envoi bulletin email: etudiantId={}, email={}, niveauCode={}, message={}",
+                    etudiant.getId(),
+                    etudiant.getEmail(),
+                    normalizedNiveau,
+                    e.getMessage(),
+                    e
+                );
+                failed++;
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("niveauCode", normalizedNiveau);
+        result.put("total", etudiants.size());
+        result.put("sent", sent);
+        result.put("failed", failed);
+        result.put("skipped", skipped);
+        result.put("unlocked", unlocked);
+        result.put("message", "Envoi des bulletins terminé");
+        return result;
+    }
+
+    public byte[] exportBulletinPdfCompletByEmail(String email) {
+        Etudiant etudiant = etudiantRepository.findByEmail(email)
+            .orElseThrow(() -> new ResourceNotFoundException("Étudiant non trouvé"));
+        assertNotesAccessEnabled(etudiant);
+        return exportBulletinPdfComplet(etudiant.getId());
+    }
+
+    private void assertNotesAccessEnabled(Etudiant etudiant) {
+        if (!Boolean.TRUE.equals(etudiant.getNotesAccessEnabled())) {
+            throw new AccessDeniedException("Acces aux notes non autorise. Le bulletin n'est pas encore publie.");
+        }
+    }
+
+    private void addInfoCell(PdfPTable table, String label, String value) {
+        Font labelFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD);
+        Font valueFont = new Font(Font.FontFamily.HELVETICA, 10);
+        PdfPCell labelCell = new PdfPCell(new Phrase(label, labelFont));
+        PdfPCell valueCell = new PdfPCell(new Phrase(value, valueFont));
+        labelCell.setBorder(Rectangle.NO_BORDER);
+        valueCell.setBorder(Rectangle.NO_BORDER);
+        labelCell.setPadding(4);
+        valueCell.setPadding(4);
+        table.addCell(labelCell);
+        table.addCell(valueCell);
+    }
+
+    private String getMention(Double moyenne) {
+        if (moyenne >= 16) return "Très Bien";
+        if (moyenne >= 14) return "Bien";
+        if (moyenne >= 12) return "Assez Bien";
+        if (moyenne >= 10) return "Passable";
+        return "Insuffisant";
+    }
+
+    private String normalizeNiveauCode(String niveauCode) {
+        if (niveauCode == null || niveauCode.isBlank()) {
+            throw new IllegalArgumentException("Le niveau est obligatoire");
+        }
+        return niveauCode.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private byte[] buildBulletinPdf(Etudiant etudiant, List<Note> notes, String title) {
+        List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+
+        double moyenneGenerale = Math.round(computeWeightedAverage(rows) * 100.0) / 100.0;
+
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Document document = new Document(PageSize.A4);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            Font titleFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD, new BaseColor(4, 41, 84));
+            Font subFont = new Font(Font.FontFamily.HELVETICA, 11, Font.NORMAL, BaseColor.DARK_GRAY);
+
+            Paragraph titre = new Paragraph(title, titleFont);
+            titre.setAlignment(Element.ALIGN_CENTER);
+            titre.setSpacingAfter(4);
+            document.add(titre);
+
+            Paragraph sousTitre = new Paragraph("Système de Gestion Académique", subFont);
+            sousTitre.setAlignment(Element.ALIGN_CENTER);
+            sousTitre.setSpacingAfter(18);
+            document.add(sousTitre);
+
+            document.add(buildStudentInfoTable(etudiant, rows.size()));
+
+            PdfPTable table = new PdfPTable(6);
+            table.setWidthPercentage(100);
+            table.setWidths(new float[]{4.2f, 1.2f, 1.2f, 1.2f, 1.4f, 1.8f});
+
+            Font headerFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.WHITE);
+            String[] headers = {"Matière", "Coeff", "DS", "TP", "EXAMEN", "Moyenne"};
+            for (String h : headers) {
+                PdfPCell cell = new PdfPCell(new Phrase(h, headerFont));
+                cell.setBackgroundColor(new BaseColor(4, 41, 84));
+                cell.setPadding(7);
+                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                table.addCell(cell);
+            }
+
+            Font dataFont = new Font(Font.FontFamily.HELVETICA, 9);
+            boolean alternate = false;
+            for (MatiereBulletinRow row : rows) {
+                BaseColor rowColor = alternate ? new BaseColor(245, 245, 245) : BaseColor.WHITE;
+                String[] values = {
+                    row.matiereNom,
+                    String.format("%.2f", row.coefficient),
+                    row.ds == null ? "-" : String.format("%.2f", row.ds),
+                    row.tp == null ? "-" : String.format("%.2f", row.tp),
+                    row.examen == null ? "-" : String.format("%.2f", row.examen),
+                    String.format("%.2f", row.moyenne)
+                };
+
+                for (String value : values) {
+                    PdfPCell cell = new PdfPCell(new Phrase(value, dataFont));
+                    cell.setBackgroundColor(rowColor);
+                    cell.setPadding(6);
+                    cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    table.addCell(cell);
+                }
+                alternate = !alternate;
+            }
+
+            document.add(table);
+
+            Font moyenneFont = new Font(
+                Font.FontFamily.HELVETICA,
+                13,
+                Font.BOLD,
+                moyenneGenerale >= 10 ? new BaseColor(27, 94, 32) : new BaseColor(183, 28, 28)
+            );
+            Paragraph moyennePara = new Paragraph(
+                String.format("\nMoyenne Générale : %.2f / 20", moyenneGenerale),
+                moyenneFont
+            );
+            moyennePara.setAlignment(Element.ALIGN_RIGHT);
+            moyennePara.setSpacingBefore(12);
+            document.add(moyennePara);
+
+            Paragraph mention = new Paragraph(
+                "Mention : " + getMention(moyenneGenerale),
+                new Font(Font.FontFamily.HELVETICA, 11, Font.ITALIC, BaseColor.DARK_GRAY)
+            );
+            mention.setAlignment(Element.ALIGN_RIGHT);
+            document.add(mention);
+
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Erreur génération bulletin", e);
+        }
+    }
+
+    private byte[] buildRelevePdfComplet(Etudiant etudiant, List<Note> notes) {
+        List<MatiereBulletinRow> rows = buildMatiereRows(notes);
+        Map<Note.Semestre, List<MatiereBulletinRow>> rowsBySemestre = groupRowsBySemestre(rows);
+
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            Document document = new Document(PageSize.A4);
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            Font titleFont = new Font(Font.FontFamily.HELVETICA, 18, Font.BOLD, new BaseColor(4, 41, 84));
+            Font subFont = new Font(Font.FontFamily.HELVETICA, 11, Font.NORMAL, BaseColor.DARK_GRAY);
+            Font sectionFont = new Font(Font.FontFamily.HELVETICA, 12, Font.BOLD, new BaseColor(4, 41, 84));
+            Font dataFont = new Font(Font.FontFamily.HELVETICA, 9);
+
+            Paragraph titre = new Paragraph("RELEVE DE NOTES COMPLET", titleFont);
+            titre.setAlignment(Element.ALIGN_CENTER);
+            titre.setSpacingAfter(4);
+            document.add(titre);
+
+            Paragraph sousTitre = new Paragraph("Système de Gestion Académique", subFont);
+            sousTitre.setAlignment(Element.ALIGN_CENTER);
+            sousTitre.setSpacingAfter(18);
+            document.add(sousTitre);
+
+            document.add(buildStudentInfoTable(etudiant, rows.size()));
+
+            List<Double> semestreMoyennes = new ArrayList<>();
+            List<Double> semestreCoeffTotals = new ArrayList<>();
+
+            for (Map.Entry<Note.Semestre, List<MatiereBulletinRow>> entry : rowsBySemestre.entrySet()) {
+                String semestreLabel = entry.getKey() != null ? entry.getKey().name() : "-";
+                Paragraph semestreTitle = new Paragraph("Semestre " + semestreLabel, sectionFont);
+                semestreTitle.setSpacingBefore(8);
+                semestreTitle.setSpacingAfter(6);
+                document.add(semestreTitle);
+
+                PdfPTable table = new PdfPTable(6);
+                table.setWidthPercentage(100);
+                table.setWidths(new float[]{4.2f, 1.2f, 1.2f, 1.2f, 1.4f, 1.8f});
+
+                Font headerFont = new Font(Font.FontFamily.HELVETICA, 10, Font.BOLD, BaseColor.WHITE);
+                String[] headers = {"Matière", "Coeff", "DS", "TP", "EXAMEN", "Moyenne"};
+                for (String h : headers) {
+                    PdfPCell cell = new PdfPCell(new Phrase(h, headerFont));
+                    cell.setBackgroundColor(new BaseColor(4, 41, 84));
+                    cell.setPadding(7);
+                    cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    table.addCell(cell);
+                }
+
+                boolean alternate = false;
+                for (MatiereBulletinRow row : entry.getValue()) {
+                    BaseColor rowColor = alternate ? new BaseColor(245, 245, 245) : BaseColor.WHITE;
+                    String[] values = {
+                        row.matiereNom,
+                        String.format("%.2f", row.coefficient),
+                        row.ds == null ? "-" : String.format("%.2f", row.ds),
+                        row.tp == null ? "-" : String.format("%.2f", row.tp),
+                        row.examen == null ? "-" : String.format("%.2f", row.examen),
+                        String.format("%.2f", row.moyenne)
+                    };
+
+                    for (String value : values) {
+                        PdfPCell cell = new PdfPCell(new Phrase(value, dataFont));
+                        cell.setBackgroundColor(rowColor);
+                        cell.setPadding(6);
+                        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                        table.addCell(cell);
+                    }
+                    alternate = !alternate;
+                }
+
+                double semestreMoyenne = computeWeightedAverage(entry.getValue());
+                double semestreCoeffTotal = entry.getValue().stream()
+                    .mapToDouble(row -> row.coefficient)
+                    .sum();
+                PdfPCell moyenneLabel = new PdfPCell(new Phrase("Moyenne Semestre", new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                moyenneLabel.setColspan(5);
+                moyenneLabel.setHorizontalAlignment(Element.ALIGN_RIGHT);
+                moyenneLabel.setPadding(6);
+                table.addCell(moyenneLabel);
+
+                PdfPCell moyenneValue = new PdfPCell(new Phrase(String.format("%.2f", semestreMoyenne), new Font(Font.FontFamily.HELVETICA, 9, Font.BOLD)));
+                moyenneValue.setHorizontalAlignment(Element.ALIGN_CENTER);
+                moyenneValue.setPadding(6);
+                table.addCell(moyenneValue);
+
+                document.add(table);
+                semestreMoyennes.add(semestreMoyenne);
+                semestreCoeffTotals.add(semestreCoeffTotal);
+            }
+
+            double moyenneSemestres = 0.0;
+            if (!semestreMoyennes.isEmpty()) {
+                double weightedSum = 0.0;
+                double totalCoeff = 0.0;
+                for (int i = 0; i < semestreMoyennes.size(); i++) {
+                    double coeff = semestreCoeffTotals.get(i);
+                    weightedSum += semestreMoyennes.get(i) * coeff;
+                    totalCoeff += coeff;
+                }
+                moyenneSemestres = totalCoeff == 0.0 ? 0.0 : weightedSum / totalCoeff;
+            }
+
+            Font moyenneFont = new Font(
+                Font.FontFamily.HELVETICA,
+                13,
+                Font.BOLD,
+                moyenneSemestres >= 10 ? new BaseColor(27, 94, 32) : new BaseColor(183, 28, 28)
+            );
+            Paragraph moyennePara = new Paragraph(
+                String.format("\nMoyenne des semestres : %.2f / 20", moyenneSemestres),
+                moyenneFont
+            );
+            moyennePara.setAlignment(Element.ALIGN_RIGHT);
+            moyennePara.setSpacingBefore(12);
+            document.add(moyennePara);
+
+            Paragraph mention = new Paragraph(
+                "Mention : " + getMention(moyenneSemestres),
+                new Font(Font.FontFamily.HELVETICA, 11, Font.ITALIC, BaseColor.DARK_GRAY)
+            );
+            mention.setAlignment(Element.ALIGN_RIGHT);
+            document.add(mention);
+
+            document.close();
+            return out.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("Erreur génération relevé", e);
+        }
+    }
+
+    private PdfPTable buildStudentInfoTable(Etudiant etudiant, int totalMatieres) {
+        PdfPTable infoTable = new PdfPTable(2);
+        infoTable.setWidthPercentage(100);
+        infoTable.setSpacingAfter(16);
+
+        Classe classe = etudiant.getClasse();
+        Niveau niveau = classe != null ? classe.getNiveau() : null;
+        Filiere filiere = niveau != null ? niveau.getFiliere() : null;
+
+        addInfoCell(infoTable, "Matricule :", safeValue(etudiant.getMatricule()));
+        addInfoCell(infoTable, "Nom & Prénom :", formatNomPrenom(etudiant.getPrenom(), etudiant.getNom()));
+        addInfoCell(infoTable, "Email :", safeValue(etudiant.getEmail()));
+        addInfoCell(infoTable, "Téléphone :", safeValue(etudiant.getTelephone()));
+        addInfoCell(infoTable, "Date de naissance :", formatDate(etudiant.getDateNaissance()));
+        addInfoCell(infoTable, "Adresse :", safeValue(etudiant.getAdresse()));
+        addInfoCell(infoTable, "Statut :", etudiant.getStatut() != null ? etudiant.getStatut().name() : "-");
+        addInfoCell(infoTable, "Classe :", formatCodeNom(classe != null ? classe.getCode() : null, classe != null ? classe.getNom() : null));
+        addInfoCell(infoTable, "Niveau :", formatCodeNom(niveau != null ? niveau.getCode() : null, niveau != null ? niveau.getNom() : null));
+        addInfoCell(infoTable, "Filière :", formatCodeNom(filiere != null ? filiere.getCode() : null, filiere != null ? filiere.getNom() : null));
+        addInfoCell(infoTable, "Total matières :", String.valueOf(totalMatieres));
+        addInfoCell(infoTable, "Date d'inscription :", formatDateTime(etudiant.getCreatedAt()));
+
+        return infoTable;
+    }
+
+    private Map<Note.Semestre, List<MatiereBulletinRow>> groupRowsBySemestre(List<MatiereBulletinRow> rows) {
+        Map<Note.Semestre, List<MatiereBulletinRow>> grouped = new LinkedHashMap<>();
+        rows.stream()
+            .sorted(Comparator
+                .comparingInt((MatiereBulletinRow r) -> semestreOrder(r.semestre))
+                .thenComparing(r -> r.matiereNom))
+            .forEach(row -> grouped
+                .computeIfAbsent(row.semestre, k -> new ArrayList<>())
+                .add(row));
+        return grouped;
+    }
+
+    private double computeWeightedAverage(List<MatiereBulletinRow> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return 0.0;
+        }
+        double weightedSum = 0.0;
+        double totalCoeff = 0.0;
+        for (MatiereBulletinRow row : rows) {
+            weightedSum += row.moyenne * row.coefficient;
+            totalCoeff += row.coefficient;
+        }
+        return totalCoeff == 0.0 ? 0.0 : weightedSum / totalCoeff;
+    }
+
+    private String formatNomPrenom(String prenom, String nom) {
+        String p = prenom != null ? prenom.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = (p + " " + n).trim();
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String formatCodeNom(String code, String nom) {
+        String c = code != null ? code.trim() : "";
+        String n = nom != null ? nom.trim() : "";
+        String full = c.isEmpty() ? n : n.isEmpty() ? c : c + " - " + n;
+        return full.isEmpty() ? "-" : full;
+    }
+
+    private String safeValue(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
+    private String formatDate(LocalDate date) {
+        return date != null ? date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-";
+    }
+
+    private String formatDateTime(LocalDateTime dateTime) {
+        return dateTime != null ? dateTime.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")) : "-";
+    }
+
+    private List<MatiereBulletinRow> buildMatiereRows(List<Note> notes) {
+        Map<String, MatiereBulletinAccumulator> map = new HashMap<>();
+
+        for (Note note : notes) {
+            if (note.getMatiere() == null) continue;
+
+            String semestre = note.getSemestre() != null ? note.getSemestre().name() : "";
+            String key = semestre + "::" + note.getMatiere().getId();
+            MatiereBulletinAccumulator acc = map.computeIfAbsent(
+                key,
+                k -> new MatiereBulletinAccumulator(
+                    note.getMatiere().getNom(),
+                    note.getMatiere().getCoefficient() != null ? note.getMatiere().getCoefficient() : 1.0,
+                    note.getSemestre()
+                )
+            );
+
+            if (note.getValeur() == null || note.getTypeNote() == null) {
+                continue;
+            }
+
+            switch (note.getTypeNote()) {
+                case CONTROLE -> {
+                    acc.dsSum += note.getValeur();
+                    acc.dsCount++;
+                }
+                case TP -> {
+                    acc.tpSum += note.getValeur();
+                    acc.tpCount++;
+                }
+                case EXAMEN -> {
+                    acc.examSum += note.getValeur();
+                    acc.examCount++;
+                }
+                default -> {
+                    // PROJET non utilisé dans la formule demandée
+                }
+            }
+        }
+
+        return map.values().stream()
+            .map(acc -> {
+                Double ds = acc.dsCount > 0 ? acc.dsSum / acc.dsCount : null;
+                Double tp = acc.tpCount > 0 ? acc.tpSum / acc.tpCount : null;
+                Double exam = acc.examCount > 0 ? acc.examSum / acc.examCount : null;
+
+                double moyenne = (exam == null ? 0.0 : exam * 0.7)
+                    + (ds == null ? 0.0 : ds * 0.3);
+
+                double moyenneRounded = Math.round(moyenne * 100.0) / 100.0;
+                return new MatiereBulletinRow(acc.matiereNom, acc.coefficient, ds, tp, exam, moyenneRounded, acc.semestre);
+            })
+            .sorted(Comparator
+                .comparingInt((MatiereBulletinRow r) -> semestreOrder(r.semestre))
+                .thenComparing(r -> r.matiereNom))
+            .toList();
+    }
+
+    private Note.TypeNote parseTypeNote(String rawType) {
+        if (rawType == null || rawType.isBlank()) {
+            return Note.TypeNote.EXAMEN;
+        }
+
+        String normalized = rawType.trim().toUpperCase(Locale.ROOT);
+        if ("DS".equals(normalized)) {
+            return Note.TypeNote.CONTROLE;
+        }
+
+        return Note.TypeNote.valueOf(normalized);
+    }
+
+    private int semestreOrder(Note.Semestre semestre) {
+        if (semestre == null) return 99;
+        return switch (semestre) {
+            case S1 -> 1;
+            case S2 -> 2;
+            case S3 -> 3;
+            case S4 -> 4;
+            case S5 -> 5;
+        };
+    }
+
+    private String resolveEnseignantNom(Note n) {
+        if (n.getEnseignant() != null) {
+            return n.getEnseignant().getNom() + " " + n.getEnseignant().getPrenom();
+        }
+        if (n.getMatiere() != null && n.getMatiere().getEnseignant() != null) {
+            return n.getMatiere().getEnseignant().getNom() + " " + n.getMatiere().getEnseignant().getPrenom();
+        }
+        return null;
+    }
+
+    private void assertCurrentUserCanManageNotes() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getName() == null) {
+            throw new AccessDeniedException("Accès refusé");
+        }
+
+        boolean isAdmin = auth.getAuthorities().stream()
+            .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+        if (isAdmin) {
+            return;
+        }
+
+        boolean isEnseignant = auth.getAuthorities().stream()
+            .anyMatch(a -> "ROLE_ENSEIGNANT".equals(a.getAuthority()));
+        if (!isEnseignant) {
+            throw new AccessDeniedException("Accès refusé");
+        }
+
+        Enseignant enseignant = enseignantRepository.findByEmail(auth.getName())
+            .orElseThrow(() -> new ResourceNotFoundException("Enseignant non trouvé"));
+
+        if (!enseignant.isCanManageNotes()) {
+            throw new AccessDeniedException("L'administration n'a pas encore autorisé la gestion des notes pour votre compte");
+        }
+    }
+
+    private NoteResponse toResponse(Note n) {
+        return NoteResponse.builder()
+            .id(n.getId())
+            .valeur(n.getValeur())
+            .typeNote(n.getTypeNote().name())
+            .semestre(n.getSemestre().name())
+            .commentaire(n.getCommentaire())
+            .createdAt(n.getCreatedAt())
+            .etudiantId(n.getEtudiant().getId())
+            .etudiantNom(n.getEtudiant().getNom())
+            .etudiantPrenom(n.getEtudiant().getPrenom())
+            .etudiantMatricule(n.getEtudiant().getMatricule())
+            .matiereId(n.getMatiere().getId())
+            .matiereNom(n.getMatiere().getNom())
+            .matiereCoefficient(n.getMatiere().getCoefficient())
+            .enseignantNom(resolveEnseignantNom(n))
+            .build();
+    }
+
+    private static class MatiereBulletinAccumulator {
+        private final String matiereNom;
+        private final double coefficient;
+        private final Note.Semestre semestre;
+        private double dsSum = 0.0;
+        private int dsCount = 0;
+        private double tpSum = 0.0;
+        private int tpCount = 0;
+        private double examSum = 0.0;
+        private int examCount = 0;
+
+        private MatiereBulletinAccumulator(String matiereNom, double coefficient, Note.Semestre semestre) {
+            this.matiereNom = matiereNom;
+            this.coefficient = coefficient;
+            this.semestre = semestre;
+        }
+    }
+
+    private static class MatiereBulletinRow {
+        private final String matiereNom;
+        private final double coefficient;
+        private final Double ds;
+        private final Double tp;
+        private final Double examen;
+        private final double moyenne;
+        private final Note.Semestre semestre;
+
+        private MatiereBulletinRow(String matiereNom, double coefficient, Double ds, Double tp, Double examen, double moyenne, Note.Semestre semestre) {
+            this.matiereNom = matiereNom;
+            this.coefficient = coefficient;
+            this.ds = ds;
+            this.tp = tp;
+            this.examen = examen;
+            this.moyenne = moyenne;
+            this.semestre = semestre;
+        }
+    }
+}
